@@ -220,14 +220,14 @@ cv::Mat dynamicContrast(
             }
         }
 
-        if (high_value <= low_value) 
+        if (high_value <= low_value) {
             for (int value = 0;
-                 value < 256;
-                 value++) {
-                lookup[channel][value] =
-                    static_cast<unsigned char>(
-                        value);
-            }
+             value < 256;
+             value++) {
+            lookup[channel][value] =
+                static_cast<unsigned char>(
+                value);
+                }
             continue;
         }
 
