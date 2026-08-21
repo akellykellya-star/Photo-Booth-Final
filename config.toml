@@ -32,4 +32,4 @@ warmup_frames = 10
 
 [processing]
 # Baseline example operation: swap the blue and red channels on every frame.
-channel_swap_enabled = false
+channel_swap_enabled = true
