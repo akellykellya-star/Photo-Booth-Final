@@ -202,9 +202,6 @@ target_link_libraries(
         PhotoBooth::warnings
 )
 
-
-# Keep project targets in strict ISO C++20 mode rather than compiler-specific
-# GNU/MSVC extension modes.
 set_target_properties(
     photo_booth_core
     live_preview
@@ -214,13 +211,25 @@ set_target_properties(
         CXX_EXTENSIONS OFF
 )
 
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG
-    "${CMAKE_BINARY_DIR}/bin")
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE
-    "${CMAKE_BINARY_DIR}/bin")
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO
-    "${CMAKE_BINARY_DIR}/bin")
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL
-    "${CMAKE_BINARY_DIR}/bin")
+set_target_properties(
+    live_preview
+    photo_booth
+    capture_single_image
+    PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+        RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/bin"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/bin"
+        RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}/bin"
+        RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}/bin"
+)
+
+set_target_properties(
+    photo_booth_core
+    PROPERTIES
+        ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+        ARCHIVE_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/lib"
+        ARCHIVE_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/lib"
+        ARCHIVE_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}/lib"
+        ARCHIVE_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}/lib"
+)
