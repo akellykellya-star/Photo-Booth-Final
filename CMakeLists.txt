@@ -233,3 +233,24 @@ set_target_properties(
         ARCHIVE_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}/lib"
         ARCHIVE_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}/lib"
 )
+
+if(WIN32)
+    set(OPENCV_DLL_DIR
+        "C:/Users/akell/Downloads/opencv/build/x64/vc16/bin"
+    )
+
+    foreach(target
+        live_preview
+        photo_booth
+        capture_single_image
+    )
+        add_custom_command(
+            TARGET ${target}
+            POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${OPENCV_DLL_DIR}"
+                "$<TARGET_FILE_DIR:${target}>"
+            COMMENT "Copying OpenCV runtime DLLs for ${target}"
+        )
+    endforeach()
+endif()
