@@ -30,11 +30,11 @@ cv::Mat processFrame(
                 processed_frame);
     }
 
-    processed_frame =
-        photo_booth::dynamicContrast(
-            processed_frame,
-            1,
-            99);
+    // processed_frame =
+        //photo_booth::dynamicContrast(
+            //processed_frame,
+            //1,
+            //99);
 
     if (state.inversion_enabled) {
         processed_frame =
