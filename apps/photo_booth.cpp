@@ -59,25 +59,30 @@ cv::Mat processFrame(
 
 void showPreviewFrame(
     const cv::Mat& frame,
-    const photo_booth::PreviewConfig& config)
+    const photo_booth::PreviewConfig& config,
+    const ProcessingState& state)
 {
     cv::Mat preview_frame =
         frame.clone();
+
     switch (config.rotation) {
     case 0:
         break;
+
     case 90:
         cv::rotate(
             preview_frame,
             preview_frame,
             cv::ROTATE_90_CLOCKWISE);
         break;
+
     case 180:
         cv::rotate(
             preview_frame,
             preview_frame,
             cv::ROTATE_180);
         break;
+
     case 270:
         cv::rotate(
             preview_frame,
@@ -85,16 +90,64 @@ void showPreviewFrame(
             cv::ROTATE_90_COUNTERCLOCKWISE);
         break;
     }
+
     if (config.mirror) {
         cv::flip(
             preview_frame,
             preview_frame,
             1);
     }
+
+    /*
+     * Display the available Week 5 controls.
+     */
+    cv::putText(
+        preview_frame,
+        "N: Quantization  R: Rotation  I: Invert  Q: Quit",
+        cv::Point(10, 25),
+        cv::FONT_HERSHEY_SIMPLEX,
+        0.55,
+        cv::Scalar(255, 255, 255),
+        1);
+
+    /*
+     * Display the current processing state.
+     */
+    std::string status =
+        "Quantization: " +
+        std::string(
+            state.quantization_enabled
+                ? "ON"
+                : "OFF");
+
+    status +=
+        "   Rotation: " +
+        std::string(
+            state.rotation_enabled
+                ? "ON"
+                : "OFF");
+
+    status +=
+        "   Invert: " +
+        std::string(
+            state.inversion_enabled
+                ? "ON"
+                : "OFF");
+
+    cv::putText(
+        preview_frame,
+        status,
+        cv::Point(10, 50),
+        cv::FONT_HERSHEY_SIMPLEX,
+        0.55,
+        cv::Scalar(255, 255, 255),
+        1);
+
     cv::imshow(
         config.window_name,
         preview_frame);
 }
+
 bool handleKey(
     const int key,
     ProcessingState& state)
@@ -288,9 +341,10 @@ int main(
                     config.processing,
                     processing_state);
 
-            showPreviewFrame(
-                processed_frame,
-                config.preview);
+           showPreviewFrame(
+            processed_frame,
+            config.preview,
+            processing_state);
 
             const int key =
                 cv::waitKey(1);
