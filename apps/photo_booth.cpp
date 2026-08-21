@@ -347,12 +347,18 @@ int main(
             processing_state);
 
             const int key =
-                cv::waitKey(1);
+            cv::waitKeyEx(1);
 
-            if (!handleKey(
-                    key,
-                    processing_state)) {
+        if (key != -1) {
+            std::cout
+            << "Key received: "
+            << key
+            << '\n';
+    }
 
+        if (!handleKey(
+            key,
+            processing_state)) {
                 break;
             }
         }
