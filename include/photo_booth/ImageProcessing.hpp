@@ -1,7 +1,7 @@
-#ifndef PHOTO_BOOTH_IMAGE_PROCESSING_HPP
-#define PHOTO_BOOTH_IMAGE_PROCESSING_HPP
+#pragma once
 
 #include <opencv2/core.hpp>
+
 namespace photo_booth {
 
 cv::Mat swapRedBlueChannels(
