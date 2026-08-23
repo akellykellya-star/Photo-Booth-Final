@@ -22,8 +22,7 @@ rotation = 0
 window_name = "Photo Booth"
 
 [capture]
-# Used by the capture_single_image utility and available to the photo booth
-# when still-image capture is added later in the semester.
+# Used by the capture_single_image utility and available to the photo booth.
 output_filename = "captured_image.png"
 
 # Number of frames discarded before a single-image capture.
