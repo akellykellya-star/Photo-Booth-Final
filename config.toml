@@ -1,6 +1,6 @@
 [camera]
 # OpenCV camera device index.
-device = 16
+device = 0
 
 # Requested image dimensions and frame rate.
 # A value of 0 asks OpenCV to use the camera/backend default.
