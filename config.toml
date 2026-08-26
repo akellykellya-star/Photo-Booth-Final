@@ -22,7 +22,9 @@ rotation = 0
 window_name = "Photo Booth"
 
 [capture]
-# Used by the capture_single_image utility and available to the photo booth.
+# Used as the base filename for captured photos.
+# The application automatically creates unique names such as
+# captured_image_001.png, captured_image_002.png, etc.
 output_filename = "captured_image.png"
 
 # Number of frames discarded before a single-image capture.
@@ -30,5 +32,5 @@ output_filename = "captured_image.png"
 warmup_frames = 10
 
 [processing]
-# Baseline example operation: swap the blue and red channels on every frame.
+# Swap the blue and red channels on every frame when enabled.
 channel_swap_enabled = false
