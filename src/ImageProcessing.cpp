@@ -1,11 +1,14 @@
 #include "photo_booth/ImageProcessing.hpp"
+
 #include <opencv2/imgproc.hpp>
+
 #include <cmath>
 #include <stdexcept>
 #include <string>
 
 namespace photo_booth {
 namespace {
+
 void validateImage(
     const cv::Mat& image,
     const char* function_name)
@@ -15,14 +18,15 @@ void validateImage(
             std::string(function_name) +
             ": input image is empty");
     }
+
     if (image.type() != CV_8UC3) {
         throw std::invalid_argument(
             std::string(function_name) +
             ": input image must be CV_8UC3");
     }
 }
-}
 
+}  // namespace
 
 cv::Mat swapRedBlueChannels(
     const cv::Mat& image)
@@ -30,23 +34,28 @@ cv::Mat swapRedBlueChannels(
     validateImage(
         image,
         "swapRedBlueChannels()");
+
     cv::Mat output;
     cv::cvtColor(
         image,
         output,
         cv::COLOR_BGR2RGB);
+
     return output;
 }
+
 cv::Mat invertImage(
     const cv::Mat& image)
 {
     validateImage(
         image,
         "invertImage()");
+
     cv::Mat output;
     cv::bitwise_not(
         image,
         output);
+
     return output;
 }
 
@@ -57,70 +66,55 @@ cv::Mat quantizeImage(
     validateImage(
         image,
         "quantizeImage()");
+
     if (levels <= 0 || levels > 256) {
         throw std::invalid_argument(
-            "quantizeImage(): "
-            "levels must be between 1 and 256");
+            "quantizeImage(): levels must be between 1 and 256");
     }
 
     cv::Mat output(
         image.size(),
         image.type());
+
     const double step =
         256.0 / static_cast<double>(levels);
 
-    /*
-     * Build a lookup table once.
-     */
     unsigned char lookup[256];
 
-    for (int value = 0;
-         value < 256;
-         value++) {
+    for (int value = 0; value < 256; ++value) {
         const int level =
-            static_cast<int>(
-                value / step);
+            static_cast<int>(value / step);
+
         int quantized =
             static_cast<int>(
-                level * step +
-                step / 2.0);
+                level * step + step / 2.0);
+
         if (quantized < 0) {
             quantized = 0;
         }
+
         if (quantized > 255) {
             quantized = 255;
         }
+
         lookup[value] =
-            static_cast<unsigned char>(
-                quantized);
+            static_cast<unsigned char>(quantized);
     }
 
-    /*
-     * Apply the lookup table to every BGR channel.
-     */
-  
-    for (int row = 0;
-         row < image.rows;
-         row++) {
-        for (int column = 0;
-             column < image.cols;
-             column++) {
+    for (int row = 0; row < image.rows; ++row) {
+        for (int column = 0; column < image.cols; ++column) {
             const cv::Vec3b& input_pixel =
-                image.at<cv::Vec3b>(
-                    row,
-                    column);
+                image.at<cv::Vec3b>(row, column);
+
             cv::Vec3b& output_pixel =
-                output.at<cv::Vec3b>(
-                    row,
-                    column);
-            output_pixel[0] =
-                lookup[input_pixel[0]];
-            output_pixel[1] =
-                lookup[input_pixel[1]];
-            output_pixel[2] =
-                lookup[input_pixel[2]];
+                output.at<cv::Vec3b>(row, column);
+
+            output_pixel[0] = lookup[input_pixel[0]];
+            output_pixel[1] = lookup[input_pixel[1]];
+            output_pixel[2] = lookup[input_pixel[2]];
         }
     }
+
     return output;
 }
 
@@ -132,75 +126,59 @@ cv::Mat dynamicContrast(
     validateImage(
         image,
         "dynamicContrast()");
+
     if (low_percentile < 0 ||
         low_percentile >= 100) {
         throw std::invalid_argument(
-            "dynamicContrast(): "
-            "low percentile must be between 0 and 99");
+            "dynamicContrast(): low percentile must be between 0 and 99");
     }
+
     if (high_percentile <= 0 ||
         high_percentile > 100) {
         throw std::invalid_argument(
-            "dynamicContrast(): "
-            "high percentile must be between 1 and 100");
+            "dynamicContrast(): high percentile must be between 1 and 100");
     }
-    if (low_percentile >= high_percentile) {
 
+    if (low_percentile >= high_percentile) {
         throw std::invalid_argument(
-            "dynamicContrast(): "
-            "low percentile must be less than "
-            "high percentile");
+            "dynamicContrast(): low percentile must be less than high percentile");
     }
+
     cv::Mat output(
         image.size(),
         image.type());
+
     const int total_pixels =
         image.rows * image.cols;
 
-    /*
-     * Three histograms:
-     * histogram[0] = blue
-     * histogram[1] = green
-     * histogram[2] = red
-     */
     int histogram[3][256] = {};
-    for (int row = 0;
-         row < image.rows;
-         row++) {
-        for (int column = 0;
-             column < image.cols;
-             column++) {
+
+    for (int row = 0; row < image.rows; ++row) {
+        for (int column = 0; column < image.cols; ++column) {
             const cv::Vec3b& pixel =
-                image.at<cv::Vec3b>(
-                    row,
-                    column);
+                image.at<cv::Vec3b>(row, column);
+
             histogram[0][pixel[0]]++;
             histogram[1][pixel[1]]++;
             histogram[2][pixel[2]]++;
         }
     }
 
-    /*
-     * A separate lookup table is created for each channel.
-     */
     unsigned char lookup[3][256];
-    for (int channel = 0;
-         channel < 3;
-         channel++) {
+
+    for (int channel = 0; channel < 3; ++channel) {
         const int low_count =
-            total_pixels *
-            low_percentile / 100;
+            total_pixels * low_percentile / 100;
+
         const int high_count =
-            total_pixels *
-            high_percentile / 100;
+            total_pixels * high_percentile / 100;
 
         int count = 0;
         int low_value = 0;
-        for (int value = 0;
-             value < 256;
-             value++) {
-            count +=
-                histogram[channel][value];
+
+        for (int value = 0; value < 256; ++value) {
+            count += histogram[channel][value];
+
             if (count > low_count) {
                 low_value = value;
                 break;
@@ -209,11 +187,10 @@ cv::Mat dynamicContrast(
 
         count = 0;
         int high_value = 255;
-        for (int value = 0;
-             value < 256;
-             value++) {
-            count +=
-                histogram[channel][value];
+
+        for (int value = 0; value < 256; ++value) {
+            count += histogram[channel][value];
+
             if (count >= high_count) {
                 high_value = value;
                 break;
@@ -221,21 +198,17 @@ cv::Mat dynamicContrast(
         }
 
         if (high_value <= low_value) {
-            for (int value = 0;
-             value < 256;
-             value++) {
-            lookup[channel][value] =
-                static_cast<unsigned char>(
-                value);
-                }
+            for (int value = 0; value < 256; ++value) {
+                lookup[channel][value] =
+                    static_cast<unsigned char>(value);
+            }
+
             continue;
         }
 
-        for (int value = 0;
-             value < 256;
-             value++) {
-
+        for (int value = 0; value < 256; ++value) {
             int output_value;
+
             if (value <= low_value) {
                 output_value = 0;
             }
@@ -253,40 +226,33 @@ cv::Mat dynamicContrast(
             if (output_value < 0) {
                 output_value = 0;
             }
+
             if (output_value > 255) {
                 output_value = 255;
             }
+
             lookup[channel][value] =
-                static_cast<unsigned char>(
-                    output_value);
+                static_cast<unsigned char>(output_value);
         }
     }
 
-    for (int row = 0;
-         row < image.rows;
-         row++) {
-        for (int column = 0;
-             column < image.cols;
-             column++) {
+    for (int row = 0; row < image.rows; ++row) {
+        for (int column = 0; column < image.cols; ++column) {
             const cv::Vec3b& input_pixel =
-                image.at<cv::Vec3b>(
-                    row,
-                    column);
+                image.at<cv::Vec3b>(row, column);
+
             cv::Vec3b& output_pixel =
-                output.at<cv::Vec3b>(
-                    row,
-                    column);
-            output_pixel[0] =
-                lookup[0][input_pixel[0]];
-            output_pixel[1] =
-                lookup[1][input_pixel[1]];
-            output_pixel[2] =
-                lookup[2][input_pixel[2]];
+                output.at<cv::Vec3b>(row, column);
+
+            output_pixel[0] = lookup[0][input_pixel[0]];
+            output_pixel[1] = lookup[1][input_pixel[1]];
+            output_pixel[2] = lookup[2][input_pixel[2]];
         }
     }
 
     return output;
 }
+
 cv::Mat rotateImage(
     const cv::Mat& image,
     double angle)
@@ -294,40 +260,45 @@ cv::Mat rotateImage(
     validateImage(
         image,
         "rotateImage()");
+
     cv::Mat output(
         image.size(),
         image.type(),
         cv::Scalar(0, 0, 0));
+
     const double radians =
         angle * CV_PI / 180.0;
+
     const double cosine =
         std::cos(radians);
+
     const double sine =
         std::sin(radians);
+
     const double center_x =
         (image.cols - 1) / 2.0;
+
     const double center_y =
         (image.rows - 1) / 2.0;
 
-    for (int row = 0;
-         row < output.rows;
-         row++) {
-        for (int column = 0;
-             column < output.cols;
-             column++) {
+    for (int row = 0; row < output.rows; ++row) {
+        for (int column = 0; column < output.cols; ++column) {
             const double x =
                 column - center_x;
+
             const double y =
                 row - center_y;
+
             const double source_x =
                 cosine * x +
                 sine * y +
                 center_x;
+
             const double source_y =
                 -sine * x +
                 cosine * y +
                 center_y;
-               
+
             const int source_column =
                 static_cast<int>(
                     std::round(source_x));
@@ -342,14 +313,106 @@ cv::Mat rotateImage(
                 source_row >= image.rows) {
                 continue;
             }
-            output.at<cv::Vec3b>(
-                row,
-                column) =
+
+            output.at<cv::Vec3b>(row, column) =
                 image.at<cv::Vec3b>(
                     source_row,
                     source_column);
         }
     }
+
     return output;
 }
+
+// Converts to grayscale while preserving the project's CV_8UC3
+// BGR image representation.
+cv::Mat grayscaleImage(
+    const cv::Mat& image)
+{
+    validateImage(
+        image,
+        "grayscaleImage()");
+
+    cv::Mat gray;
+    cv::cvtColor(
+        image,
+        gray,
+        cv::COLOR_BGR2GRAY);
+
+    cv::Mat output;
+    cv::cvtColor(
+        gray,
+        output,
+        cv::COLOR_GRAY2BGR);
+
+    return output;
 }
+
+// Applies a Gaussian spatial filter. The kernel size is forced to
+// an odd positive value so it is valid for GaussianBlur().
+cv::Mat blurImage(
+    const cv::Mat& image,
+    int kernel_size)
+{
+    validateImage(
+        image,
+        "blurImage()");
+
+    if (kernel_size < 3 || kernel_size > 31 ||
+        kernel_size % 2 == 0) {
+        throw std::invalid_argument(
+            "blurImage(): kernel size must be an odd value from 3 to 31");
+    }
+
+    cv::Mat output;
+
+    cv::GaussianBlur(
+        image,
+        output,
+        cv::Size(kernel_size, kernel_size),
+        0.0);
+
+    return output;
+}
+
+// Detects edges with Canny and converts the result back to BGR
+// so it can remain in the common CV_8UC3 pipeline representation.
+cv::Mat edgeDetectImage(
+    const cv::Mat& image,
+    double threshold1,
+    double threshold2)
+{
+    validateImage(
+        image,
+        "edgeDetectImage()");
+
+    if (threshold1 < 0.0 ||
+        threshold2 <= threshold1) {
+        throw std::invalid_argument(
+            "edgeDetectImage(): thresholds must satisfy "
+            "0 <= threshold1 < threshold2");
+    }
+
+    cv::Mat gray;
+    cv::cvtColor(
+        image,
+        gray,
+        cv::COLOR_BGR2GRAY);
+
+    cv::Mat edges;
+    cv::Canny(
+        gray,
+        edges,
+        threshold1,
+        threshold2);
+
+    cv::Mat output;
+    cv::cvtColor(
+        edges,
+        output,
+        cv::COLOR_GRAY2BGR);
+
+    return output;
+}
+
+}  // namespace photo_booth
