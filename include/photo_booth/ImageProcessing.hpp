@@ -23,4 +23,17 @@ cv::Mat rotateImage(
     const cv::Mat& image,
     double angle);
 
-}
+// Week 15 additions.
+cv::Mat grayscaleImage(
+    const cv::Mat& image);
+
+cv::Mat blurImage(
+    const cv::Mat& image,
+    int kernel_size);
+
+cv::Mat edgeDetectImage(
+    const cv::Mat& image,
+    double threshold1,
+    double threshold2);
+
+}  
