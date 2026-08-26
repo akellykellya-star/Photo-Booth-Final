@@ -1,54 +1,104 @@
 # Photo Booth
 
-`Photo Booth` is the starting C++20 project for the semester-long photo booth assignment in **IMGS.361 Image Processing**. The starter code provides camera acquisition, typed TOML configuration, a minimal live-preview example, and a closely related photo-booth application with an explicit image-processing pipeline for students to extend throughout the semester.
+A C++20/OpenCV photo booth application for IMGS.361 Image Processing.
 
-The project intentionally separates reusable support code from application-specific behavior. Camera acquisition, configuration loading, and starter image-processing functions live in the `photo_booth` namespace; the applications contain their own control flow and runtime state.
+The project keeps the original semester-project architecture: camera acquisition and configuration remain separate from the reusable image-processing functions, while `apps/photo_booth.cpp` owns the interactive runtime state and processing order.
 
-## Starter applications
+## Final processing capabilities
 
-The project builds three executables:
+The photo booth implements eight substantive image-processing capabilities:
 
-- `live_preview` — minimal camera acquisition and display example
-- `photo_booth` — semester project baseline with an explicit processing pipeline
-- `capture_single_image` — diagnostic/example utility that saves one acquired frame
+1. **Channel swapping** — swaps the red and blue channels.
+2. **Dynamic contrast enhancement** — stretches each channel using percentile-based low/high values.
+3. **Grayscale conversion** — converts the image to grayscale while preserving the project's three-channel BGR representation.
+4. **Gaussian blur** — applies a configurable odd-sized Gaussian spatial filter.
+5. **Canny edge detection** — detects image edges and converts the result back to three-channel BGR.
+6. **Image inversion** — computes the photographic negative of the image.
+7. **Image quantization** — reduces each channel to a selectable number of intensity levels.
+8. **Arbitrary-angle rotation** — rotates the image using inverse coordinate mapping.
 
-### `live_preview`
+The application also provides a working photo-capture workflow with a three-second countdown, processed-image capture, and unique output filenames.
 
-`apps/live_preview.cpp` intentionally has no `processFrame()` function. It acquires each camera frame, applies only display-oriented preview rotation/mirroring, and displays the result:
+## Processing pipeline
 
-```text
-camera -> display
-```
-
-This provides a simple reference showing that an explicit processing stage is not required merely to acquire and display camera imagery.
-
-### `photo_booth`
-
-`apps/photo_booth.cpp` inserts an explicit processing stage between acquisition and display:
+The active operations are applied in this order:
 
 ```text
-camera -> processFrame() -> display
+camera
+  ↓
+channel swap
+  ↓
+dynamic contrast
+  ↓
+grayscale
+  ↓
+Gaussian blur
+  ↓
+Canny edge detection
+  ↓
+inversion
+  ↓
+quantization
+  ↓
+rotation
+  ↓
+preview / capture
 ```
 
-The starter pipeline demonstrates two different kinds of processing controls:
+Operations controlled by the keyboard can be enabled independently, so multiple capabilities can be combined in a single processing pipeline.
 
-- **Baseline operation:** `swapRedBlueChannels()` is controlled by `processing.channel_swap_enabled` in `config.toml` and, when enabled, is applied to every frame.
-- **Optional operation:** `invertImage()` is toggled interactively by pressing `i` while the program is running. Its state is independent of other optional operations that may be added later.
+## Image representation
 
-These simple operations are intended to demonstrate architecture rather than serve as substantive course algorithms.
+Successful camera frames use OpenCV's `CV_8UC3` BGR representation.
 
-## Image representation convention
+Processing functions preserve that representation. In particular, grayscale and edge detection internally use a single-channel image but convert their results back to BGR before returning. This allows the processing operations to be composed without changing the pipeline's image type.
 
-Successful `ImageCapture::read()` calls provide **8-bit, three-channel BGR images (`CV_8UC3`)**. This is the image representation contract for the Photo Booth processing pipeline.
+## Controls
 
-Even an operation that conceptually produces grayscale imagery should return a three-channel BGR image, with the grayscale value replicated in the B, G, and R channels. Maintaining one image representation throughout the pipeline simplifies composition of processing operations.
+Run the application and use the following keys while the preview window has focus:
 
-OpenCV's property is named `CAP_PROP_CONVERT_RGB`, but normal decoded OpenCV color imagery uses BGR channel order. `ImageCapture` requests this conversion internally and verifies the returned frame type; it is not exposed as a TOML option.
+| Key | Function |
+| --- | --- |
+| `C` | Toggle dynamic contrast |
+| `I` | Toggle inversion |
+| `N` | Toggle quantization |
+| `G` | Toggle grayscale |
+| `B` | Toggle Gaussian blur |
+| `E` | Toggle Canny edge detection |
+| `R` | Toggle rotation |
+| `[` / `]` | Decrease / increase quantization levels |
+| `-` / `+` | Decrease / increase blur kernel size |
+| `,` / `.` | Decrease / increase rotation angle |
+| `SPACE` | Start a 3-second capture countdown |
+| `Q` or `Esc` | Quit |
+
+Quantization levels range from 2 through 256. Blur kernel sizes range from 3 through 31 and remain odd. Rotation ranges from -180 through +180 degrees in five-degree steps.
+
+## Capture
+
+Press `SPACE` to capture the currently processed image.
+
+The application:
+
+1. Freezes the current processed frame.
+2. Displays a three-second countdown.
+3. Saves the processed image.
+4. Automatically chooses the next unused filename.
+
+With the default configuration, captures are saved as:
+
+```text
+captured_image_001.png
+captured_image_002.png
+captured_image_003.png
+```
+
+If a directory is included in `capture.output_filename`, the directory is created automatically when needed.
 
 ## Project organization
 
 ```text
-imgs361-photo-booth/
+Photo-Booth-Final/
 ├── CMakeLists.txt
 ├── config.toml
 ├── LICENSE
@@ -66,53 +116,42 @@ imgs361-photo-booth/
 │   ├── AppConfig.cpp
 │   ├── ImageCapture.cpp
 │   └── ImageProcessing.cpp
-└── notes/
-    └── git_workflows
+└── tools/
 ```
 
-`ImageCapture` wraps OpenCV's `cv::VideoCapture`. `AppConfig` defines and loads the typed application configuration. `ImageProcessing` contains reusable processing functions used by the photo-booth pipeline.
-
-## Student-facing files
-
-Most image-processing work during the semester should be concentrated in a small part of the project:
+The Week 15 work is intentionally concentrated in:
 
 ```text
 apps/photo_booth.cpp
 include/photo_booth/ImageProcessing.hpp
 src/ImageProcessing.cpp
 config.toml
+README.md
 ```
 
-When a new processing operation needs a persistent configuration value, students will also modify:
-
-```text
-include/photo_booth/AppConfig.hpp
-src/AppConfig.cpp
-```
-
-`ImageCapture` and most of the top-level CMake configuration can be treated as supplied infrastructure unless a project extension specifically requires changes there. Ordinary processing operations added to the existing `ImageProcessing.cpp` do **not** require a CMake change.
+No new framework or processing class hierarchy is required. Processing algorithms remain ordinary functions and `processFrame()` continues to determine the pipeline order.
 
 ## Requirements
 
 - CMake 3.30 or later
-- a C++20 compiler
+- C++20 compiler
 - OpenCV 4.x or 5.x with `core`, `videoio`, `highgui`, `imgcodecs`, and `imgproc`
 - Boost with the `program_options` component
 - Eigen3
-- toml++ 3.4.0, downloaded automatically by CMake using `FetchContent`
+- toml++ 3.4.0
 
-Boost.Program_options and Eigen are intentionally pre-provisioned for student applications even though the starter applications do not yet use them directly. This allows students to use either library later in the semester without changing the project build environment.
+The existing CMake configuration downloads toml++ with `FetchContent`.
 
-## Build
+## Build from a clean clone
 
 From the project root:
 
-```sh
+```bash
 cmake -S . -B build
 cmake --build build
 ```
 
-Compiled executables are placed in `build/bin`:
+The executables are placed in:
 
 ```text
 build/bin/
@@ -121,195 +160,60 @@ build/bin/
 └── photo_booth
 ```
 
-The project requests strict ISO C++20 (`CXX_EXTENSIONS OFF`) and enables common compiler warnings for both the core library and all student-facing applications.
-
-## Configuration
-
-All applications accept one optional positional argument: the TOML configuration filename. When omitted, `config.toml` in the current working directory is used.
-
-The supplied configuration is:
-
-```toml
-[camera]
-device = 0
-width = 1280
-height = 720
-fps = 30.0
-fourcc = ""
-
-[preview]
-mirror = false
-rotation = 0
-window_name = "Photo Booth"
-
-[capture]
-output_filename = "captured_image.png"
-warmup_frames = 10
-
-[processing]
-channel_swap_enabled = true
-```
-
-Missing values use defaults declared in the typed C++ configuration structures. Unknown sections, unknown options, incorrect value types, and invalid values are reported as errors.
-
-## Run the minimal live preview
-
-```sh
-./build/bin/live_preview
-```
-
-or:
-
-```sh
-./build/bin/live_preview webcam.toml
-```
-
-Press `Esc` or `q` to quit.
+For a clean-clone verification, remove the entire `build` directory before running the commands above.
 
 ## Run the photo booth
 
-```sh
+```bash
 ./build/bin/photo_booth
 ```
 
-or:
+Or provide a different TOML configuration:
 
-```sh
+```bash
 ./build/bin/photo_booth webcam.toml
 ```
 
-Controls:
+The default configuration is `config.toml` in the current working directory.
 
-- `i` — toggle image inversion on/off
-- `Esc` or `q` — quit
+## Other applications
 
-The configured channel-swap baseline operation is applied before the optional inversion operation. Future operations can be added to `processFrame()` in the order desired for the processing pipeline.
+Minimal live preview:
 
-## Adding an Operation
-
-The starter project intentionally uses a simple, explicit extension pattern. Processing algorithms are ordinary free functions, while `processFrame()` determines which operations run and in what order. Avoid introducing a class hierarchy or general-purpose processing framework until the growing application provides a clear reason to do so.
-
-### Adding an optional runtime operation
-
-For an operation that the user turns on and off while the application is running:
-
-1. Declare the processing function in `include/photo_booth/ImageProcessing.hpp`.
-2. Implement the function in `src/ImageProcessing.cpp`.
-3. Add the operation's runtime state to `ProcessingState` in `apps/photo_booth.cpp`.
-4. Add a keyboard control in `handleKey()` to toggle or adjust that state.
-5. Add the operation to the optional-operations portion of `processFrame()` in the desired pipeline order.
-
-For example, a threshold operation might eventually add:
-
-```cpp
-bool threshold_enabled{false};
+```bash
+./build/bin/live_preview
 ```
 
-to `ProcessingState`, toggle it from `handleKey()`, and apply `thresholdImage()` from `processFrame()` when the state is enabled. Each optional operation should have independent state so that multiple operations can be active at the same time.
+Single-image diagnostic utility:
 
-### Adding a baseline configurable operation
-
-For an operation whose initial behavior is established by `config.toml` and applied automatically to every frame when enabled:
-
-1. Declare the processing function in `include/photo_booth/ImageProcessing.hpp`.
-2. Implement the function in `src/ImageProcessing.cpp`.
-3. Add the operation's enable flag and any parameters to the flat `ProcessingConfig` structure in `include/photo_booth/AppConfig.hpp`.
-4. Add matching values to the `[processing]` section of `config.toml`.
-5. Add those key names to the processing validation list in `src/AppConfig.cpp`, read the values with `readOptional()`, and add any necessary range/value checks to `validateValues()`.
-6. Add the operation to the baseline-operations portion of `processFrame()` in the desired pipeline order.
-
-For example, a future configurable quantization operation could use:
-
-```toml
-[processing]
-channel_swap_enabled = true
-quantization_enabled = false
-quantization_levels = 8
-```
-
-with a correspondingly simple configuration structure:
-
-```cpp
-struct ProcessingConfig {
-  bool channel_swap_enabled{false};
-  bool quantization_enabled{false};
-  int quantization_levels{8};
-};
-```
-
-The flat `[processing]` section is intentional. It keeps the mechanics of adding a configuration value visible and repetitive, so that most student effort remains focused on the image-processing algorithm itself. If the configuration becomes unwieldy later in the semester, that is an appropriate opportunity to consider refactoring.
-
-## Single-image camera utility
-
-```sh
+```bash
 ./build/bin/capture_single_image
 ```
 
-or:
+All applications also support:
 
-```sh
-./build/bin/capture_single_image laboratory_camera.toml
+```bash
+./build/bin/photo_booth --help
 ```
 
-The output filename and camera warmup count are controlled by the `[capture]` section.
+## Configuration
 
-All three applications support `--help`.
+The supplied `config.toml` contains camera, preview, capture, and processing settings.
 
-## ImageCapture component
+The processing effects added for the final application are intentionally runtime-controlled rather than adding a large configuration system. This keeps the final architecture close to the semester's existing design while allowing the user to combine processing capabilities interactively.
 
-`ImageCapture` contains no photo-booth user-interface or image-processing behavior. It acquires camera frames and exposes the most recent frame as a `cv::Mat`.
+## Design notes
 
-```cpp
-#include "photo_booth/ImageCapture.hpp"
+The application uses an explicit processing pipeline rather than a general-purpose processing framework.
 
-#include <iostream>
+`ImageProcessing.cpp` contains reusable image-processing algorithms.
 
-int main() {
-  photo_booth::ImageCapture camera;
+`photo_booth.cpp` contains:
 
-  if (!camera.open()) {
-    std::cerr << camera.errorMessage() << '\n';
-    return 1;
-  }
+- `ProcessingState` for runtime effect state.
+- `processFrame()` for pipeline order.
+- `showPreviewFrame()` for the interactive display.
+- `handleKey()` for keyboard controls.
+- Capture/countdown behavior.
 
-  if (!camera.read()) {
-    std::cerr << camera.errorMessage() << '\n';
-    return 1;
-  }
-
-  const cv::Mat& image = camera.image();
-
-  // image is CV_8UC3 using BGR channel order.
-}
-```
-
-Camera properties such as image dimensions, frame rate, and FOURCC are requests rather than guarantees. The hardware, operating system, driver, and OpenCV backend may ignore a requested property or select a nearby supported mode. Use `cameraInfo()` after opening the device to inspect the values reported by the backend.
-
-## Suggested evolution during the course
-
-The contrast between `live_preview` and `photo_booth` provides a simple starting lesson in application structure. `live_preview` demonstrates direct use of an acquired frame. `photo_booth` demonstrates how a growing application benefits from an explicit processing pipeline.
-
-As capabilities accumulate, students should continue adding simple processing functions and explicit configuration/runtime state. `processFrame()` and `handleKey()` are expected to become somewhat more crowded as the project grows; that pressure can provide a concrete reason to refactor toward additional classes or modules when those abstractions become useful. Potential additions include quantization, dynamic contrast enhancement, histogram operations, spatial and frequency-domain filtering, sharpening, geometric transformations, perspective correction, artistic filters, feature detection, segmentation, and capture/review behavior.
-
-## License
-
-This project is licensed under the GNU General Public License v3.0. See `LICENSE` for details.
-
-## Contact
-
-### Author
-
-Carl Salvaggio, Ph.D.  
-Professor of Imaging Science  
-Director, Digital Imaging and Remote Sensing (DIRS) Laboratory
-
-### E-mail
-
-carl.salvaggio@rit.edu
-
-### Organization
-
-Chester F. Carlson Center for Imaging Science  
-Rochester Institute of Technology  
-Rochester, New York, 14623  
-United States
+This preserves the architec
