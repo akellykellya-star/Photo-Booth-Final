@@ -24,8 +24,11 @@ struct ProcessingState {
     bool inversion_enabled{false};
     bool quantization_enabled{false};
     bool rotation_enabled{false};
+    bool cornerDetection = false;
+    bool useFAST = false;
+    bool classification = false;
+    bool useCosineClassifier = false;
 
-    // Week 15 additions.
     bool grayscale_enabled{false};
     bool blur_enabled{false};
     bool edge_enabled{false};
@@ -99,7 +102,17 @@ cv::Mat processFrame(
                 processed_frame,
                 state.rotation_angle);
     }
+    if (state.cornerDetection) {
+    cv::Mat cornerMask;
+    if (state.useFAST) {
+        cornerMask = detectFASTCorners(frame);
+    } 
+    else {
+        cornerMask = detectHarrisCorners(frame);
+    }
 
+    result = drawCornerOverlay(result, cornerMask);
+}
     return processed_frame;
 }
 
