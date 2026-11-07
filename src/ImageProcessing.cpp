@@ -37,6 +37,7 @@ cv::Mat swapRedBlueChannels(
         "swapRedBlueChannels()");
 
     cv::Mat output;
+
     cv::cvtColor(
         image,
         output,
@@ -53,6 +54,7 @@ cv::Mat invertImage(
         "invertImage()");
 
     cv::Mat output;
+
     cv::bitwise_not(
         image,
         output);
@@ -335,12 +337,14 @@ cv::Mat grayscaleImage(
         "grayscaleImage()");
 
     cv::Mat gray;
+
     cv::cvtColor(
         image,
         gray,
         cv::COLOR_BGR2GRAY);
 
     cv::Mat output;
+
     cv::cvtColor(
         gray,
         output,
@@ -349,8 +353,7 @@ cv::Mat grayscaleImage(
     return output;
 }
 
-// Applies a Gaussian spatial filter. The kernel size is forced to
-// an odd positive value so it is valid for GaussianBlur().
+// Applies a Gaussian spatial filter.
 cv::Mat blurImage(
     const cv::Mat& image,
     int kernel_size)
@@ -359,7 +362,8 @@ cv::Mat blurImage(
         image,
         "blurImage()");
 
-    if (kernel_size < 3 || kernel_size > 31 ||
+    if (kernel_size < 3 ||
+        kernel_size > 31 ||
         kernel_size % 2 == 0) {
         throw std::invalid_argument(
             "blurImage(): kernel size must be an odd value from 3 to 31");
@@ -376,8 +380,7 @@ cv::Mat blurImage(
     return output;
 }
 
-// Detects edges with Canny and converts the result back to BGR
-// so it can remain in the common CV_8UC3 pipeline representation.
+// Detects edges with Canny and converts the result back to BGR.
 cv::Mat edgeDetectImage(
     const cv::Mat& image,
     double threshold1,
@@ -395,12 +398,14 @@ cv::Mat edgeDetectImage(
     }
 
     cv::Mat gray;
+
     cv::cvtColor(
         image,
         gray,
         cv::COLOR_BGR2GRAY);
 
     cv::Mat edges;
+
     cv::Canny(
         gray,
         edges,
@@ -408,12 +413,282 @@ cv::Mat edgeDetectImage(
         threshold2);
 
     cv::Mat output;
+
     cv::cvtColor(
         edges,
         output,
         cv::COLOR_GRAY2BGR);
 
     return output;
+}
+
+// Harris corner detection.
+cv::Mat detectHarrisCorners(
+    const cv::Mat& image,
+    int blockSize,
+    int apertureSize,
+    double k,
+    double thresholdRatio)
+{
+    validateImage(
+        image,
+        "detectHarrisCorners()");
+
+    if (blockSize <= 0 ||
+        apertureSize < 3 ||
+        apertureSize > 7 ||
+        apertureSize % 2 == 0 ||
+        thresholdRatio < 0.0 ||
+        thresholdRatio > 1.0) {
+        throw std::invalid_argument(
+            "detectHarrisCorners(): invalid detector parameters");
+    }
+
+    cv::Mat gray;
+
+    cv::cvtColor(
+        image,
+        gray,
+        cv::COLOR_BGR2GRAY);
+
+    cv::Mat grayFloat;
+
+    gray.convertTo(
+        grayFloat,
+        CV_32F);
+
+    cv::Mat response;
+
+    cv::cornerHarris(
+        grayFloat,
+        response,
+        blockSize,
+        apertureSize,
+        k);
+
+    cv::Mat normalized;
+
+    cv::normalize(
+        response,
+        normalized,
+        0.0,
+        255.0,
+        cv::NORM_MINMAX);
+
+    cv::Mat cornerMask;
+
+    cv::threshold(
+        normalized,
+        cornerMask,
+        255.0 * thresholdRatio,
+        255.0,
+        cv::THRESH_BINARY);
+
+    cornerMask.convertTo(
+        cornerMask,
+        CV_8UC1);
+
+    return cornerMask;
+}
+
+// FAST corner detection.
+cv::Mat detectFASTCorners(
+    const cv::Mat& image,
+    int threshold,
+    bool nonmaxSuppression)
+{
+    validateImage(
+        image,
+        "detectFASTCorners()");
+
+    if (threshold <= 0) {
+        throw std::invalid_argument(
+            "detectFASTCorners(): threshold must be positive");
+    }
+
+    cv::Mat gray;
+
+    cv::cvtColor(
+        image,
+        gray,
+        cv::COLOR_BGR2GRAY);
+
+    const cv::Ptr<cv::FastFeatureDetector> detector =
+        cv::FastFeatureDetector::create(
+            threshold,
+            nonmaxSuppression);
+
+    std::vector<cv::KeyPoint> keypoints;
+
+    detector->detect(
+        gray,
+        keypoints);
+
+    cv::Mat cornerMask =
+        cv::Mat::zeros(
+            image.size(),
+            CV_8UC1);
+
+    for (const cv::KeyPoint& point : keypoints) {
+        const cv::Point location(
+            cvRound(point.pt.x),
+            cvRound(point.pt.y));
+
+        cv::circle(
+            cornerMask,
+            location,
+            2,
+            cv::Scalar(255),
+            cv::FILLED);
+    }
+
+    return cornerMask;
+}
+
+// Draws detected corners as red circles.
+cv::Mat drawCornerOverlay(
+    const cv::Mat& image,
+    const cv::Mat& cornerMask)
+{
+    validateImage(
+        image,
+        "drawCornerOverlay()");
+
+    if (cornerMask.empty() ||
+        cornerMask.type() != CV_8UC1 ||
+        cornerMask.size() != image.size()) {
+        throw std::invalid_argument(
+            "drawCornerOverlay(): corner mask must be CV_8UC1 "
+            "and match the input image size");
+    }
+
+    cv::Mat output =
+        image.clone();
+
+    for (int row = 0; row < cornerMask.rows; ++row) {
+        for (int column = 0; column < cornerMask.cols; ++column) {
+            if (cornerMask.at<unsigned char>(row, column) != 0) {
+                cv::circle(
+                    output,
+                    cv::Point(column, row),
+                    3,
+                    cv::Scalar(0, 0, 255),
+                    cv::FILLED);
+            }
+        }
+    }
+
+    return output;
+}
+
+// Creates a 48-element feature vector from three normalized
+// 16-bin color histograms.
+std::vector<float> extractFeatureVector(
+    const cv::Mat& image)
+{
+    validateImage(
+        image,
+        "extractFeatureVector()");
+
+    constexpr int histogramBins = 16;
+    constexpr int histogramSize[] = {histogramBins};
+    constexpr float histogramRange[] = {0.0f, 256.0f};
+
+    const float* ranges[] = {histogramRange};
+
+    std::vector<float> features;
+
+    features.reserve(
+        3 * histogramBins);
+
+    for (int channel = 0; channel < 3; ++channel) {
+        cv::Mat histogram;
+
+        const int channels[] = {channel};
+
+        cv::calcHist(
+            &image,
+            1,
+            channels,
+            cv::Mat(),
+            histogram,
+            1,
+            histogramSize,
+            ranges,
+            true,
+            false);
+
+        cv::normalize(
+            histogram,
+            histogram,
+            1.0,
+            0.0,
+            cv::NORM_L1);
+
+        for (int bin = 0; bin < histogramBins; ++bin) {
+            features.push_back(
+                histogram.at<float>(bin));
+        }
+    }
+
+    return features;
+}
+
+// Calculates Euclidean distance between two feature vectors.
+double minimumDistance(
+    const std::vector<float>& a,
+    const std::vector<float>& b)
+{
+    if (a.empty() || a.size() != b.size()) {
+        throw std::invalid_argument(
+            "minimumDistance(): feature vectors must have equal "
+            "nonzero sizes");
+    }
+
+    double squaredDistance = 0.0;
+
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        const double difference =
+            static_cast<double>(a[i]) -
+            static_cast<double>(b[i]);
+
+        squaredDistance +=
+            difference * difference;
+    }
+
+    return std::sqrt(squaredDistance);
+}
+
+// Calculates cosine similarity between two feature vectors.
+double cosineSimilarity(
+    const std::vector<float>& a,
+    const std::vector<float>& b)
+{
+    if (a.empty() || a.size() != b.size()) {
+        throw std::invalid_argument(
+            "cosineSimilarity(): feature vectors must have equal "
+            "nonzero sizes");
+    }
+
+    double dotProduct = 0.0;
+    double magnitudeA = 0.0;
+    double magnitudeB = 0.0;
+
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        const double valueA = a[i];
+        const double valueB = b[i];
+
+        dotProduct += valueA * valueB;
+        magnitudeA += valueA * valueA;
+        magnitudeB += valueB * valueB;
+    }
+
+    if (magnitudeA == 0.0 || magnitudeB == 0.0) {
+        return 0.0;
+    }
+
+    return dotProduct /
+        (std::sqrt(magnitudeA) * std::sqrt(magnitudeB));
 }
 
 }  // namespace photo_booth
