@@ -1,6 +1,7 @@
 #include "photo_booth/ImageProcessing.hpp"
 
 #include <opencv2/imgproc.hpp>
+#include <opencv2/features2d.hpp>
 
 #include <cmath>
 #include <stdexcept>
