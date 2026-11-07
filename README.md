@@ -6,7 +6,7 @@ The project keeps the original semester-project architecture: camera acquisition
 
 ## Final processing capabilities
 
-The photo booth implements ten substantive image-processing capabilities:
+The photo booth implements the original image-processing pipeline plus two additional Week 15 features: corner detection and Fourier-domain data embedding.
 
 1. **Channel swapping** — swaps the red and blue channels.
 2. **Dynamic contrast enhancement** — stretches each channel using percentile-based low/high values.
@@ -16,8 +16,8 @@ The photo booth implements ten substantive image-processing capabilities:
 6. **Image inversion** — computes the photographic negative of the image.
 7. **Image quantization** — reduces each channel to a selectable number of intensity levels.
 8. **Arbitrary-angle rotation** — rotates the image using inverse coordinate mapping.
-9. **Harris and FAST corner detection** — detects image corners using either the Harris corner response or the FAST feature detector and displays detected locations as a red overlay.
-10. **Minimum-distance and cosine classification** — represents images with normalized color histograms and compares the live image against reference-image classes using either Euclidean distance or cosine similarity.
+9. **Corner detection** — supports Harris and FAST detectors, selectable with `H` and `F`; detected points are blended into the original frame in red.
+10. **Data embedding** — embeds a small built-in camera icon into the luminance channel by modulating selected Fourier phase coefficients. The icon is recovered from the processed image and shown in the preview while embedding is enabled.
 
 The application also provides a working photo-capture workflow with a three-second countdown, processed-image capture, and unique output filenames.
 
@@ -44,6 +44,10 @@ quantization
   ↓
 rotation
   ↓
+Harris or FAST corner overlay (optional)
+  ↓
+Fourier phase icon embedding (optional)
+  ↓
 preview / capture
 ```
 
@@ -67,6 +71,10 @@ Run the application and use the following keys while the preview window has focu
 | `G` | Toggle grayscale |
 | `B` | Toggle Gaussian blur |
 | `E` | Toggle Canny edge detection |
+| `H` | Enable / disable Harris corner detection (switches off FAST) |
+| `F` | Enable / disable FAST corner detection (switches off Harris) |
+| `X` | Turn off corner detection |
+| `D` | Toggle Fourier phase-dispersion icon embedding |
 | `R` | Toggle rotation |
 | `[` / `]` | Decrease / increase quantization levels |
 | `-` / `+` | Decrease / increase blur kernel size |
