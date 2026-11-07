@@ -38,25 +38,44 @@ struct CaptureConfig {
 
 /**
  * @brief Settings used for baseline processing operations.
- *
- * Keep these settings intentionally simple and flat. New configurable
- * processing operations can add their enable flag and parameters here.
  */
 struct ProcessingConfig {
   bool channel_swap_enabled{false};
 };
 
 /**
+ * @brief Settings used for Harris and FAST corner detection.
+ */
+struct CornerDetectionConfig {
+  bool enabled{false};
+  std::string method{"harris"};
+  int harris_block_size{2};
+  int harris_aperture_size{3};
+  double harris_k{0.04};
+  double harris_threshold_ratio{0.01};
+  int fast_threshold{20};
+  bool fast_nonmax_suppression{true};
+};
+
+/**
+ * @brief Settings used for image classification.
+ */
+struct ClassificationConfig {
+  bool enabled{false};
+  std::string method{"minimum_distance"};
+  std::filesystem::path reference_directory{"resources/classes"};
+};
+
+/**
  * @brief Complete application configuration loaded from TOML.
- *
- * Additional configuration groups can be added here as the photo booth grows
- * during the semester.
  */
 struct AppConfig {
   CameraConfig camera;
   PreviewConfig preview;
   CaptureConfig capture;
   ProcessingConfig processing;
+  CornerDetectionConfig corner_detection;
+  ClassificationConfig classification;
 };
 
 /**
