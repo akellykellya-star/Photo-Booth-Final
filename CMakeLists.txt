@@ -7,9 +7,19 @@ project(
     LANGUAGES CXX
 )
 
+
+# -----------------------------------------------------------------------------
+# Build configuration
+# -----------------------------------------------------------------------------
+
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+
+
+# -----------------------------------------------------------------------------
+# Dependencies
+# -----------------------------------------------------------------------------
 
 find_package(
     OpenCV
@@ -46,6 +56,12 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(tomlplusplus)
 
+
+# -----------------------------------------------------------------------------
+# Dependency validation
+# -----------------------------------------------------------------------------
+
+# Explicitly support OpenCV 4.x and 5.x.
 if(OpenCV_VERSION VERSION_LESS 4.0)
     message(
         FATAL_ERROR
@@ -63,6 +79,11 @@ if(OpenCV_VERSION VERSION_GREATER_EQUAL 6.0)
 endif()
 
 message(STATUS "Using OpenCV ${OpenCV_VERSION}")
+
+
+# -----------------------------------------------------------------------------
+# Project-wide target settings
+# -----------------------------------------------------------------------------
 
 add_library(photo_booth_warnings INTERFACE)
 add_library(PhotoBooth::warnings ALIAS photo_booth_warnings)
@@ -84,6 +105,9 @@ else()
     )
 endif()
 
+# Boost.Program_options and Eigen are intentionally pre-provisioned for
+# student applications even though the starter applications do not yet use
+# them directly.
 add_library(photo_booth_app_dependencies INTERFACE)
 add_library(PhotoBooth::app_dependencies ALIAS photo_booth_app_dependencies)
 
@@ -93,6 +117,11 @@ target_link_libraries(
         Boost::program_options
         Eigen3::Eigen
 )
+
+
+# -----------------------------------------------------------------------------
+# Core library
+# -----------------------------------------------------------------------------
 
 add_library(
     photo_booth_core
@@ -125,6 +154,13 @@ target_link_libraries(
         PhotoBooth::warnings
 )
 
+
+# -----------------------------------------------------------------------------
+# Applications
+# -----------------------------------------------------------------------------
+
+# Minimal live-preview example: acquire a frame and display it directly,
+# without an explicit image-processing stage.
 add_executable(
     live_preview
     apps/live_preview.cpp
@@ -138,6 +174,8 @@ target_link_libraries(
         PhotoBooth::warnings
 )
 
+# Main student application: the semester project baseline with an explicit
+# image-processing pipeline.
 add_executable(
     photo_booth
     apps/photo_booth.cpp
@@ -151,6 +189,7 @@ target_link_libraries(
         PhotoBooth::warnings
 )
 
+# Small camera utility retained as a diagnostic/example program.
 add_executable(
     capture_single_image
     apps/capture_single_image.cpp
