@@ -372,16 +372,27 @@ cv::Mat drawCornerOverlay(
 
     cv::Mat output = image.clone();
 
-    for (int row = 0; row < output.rows; ++row) {
-        for (int column = 0; column < output.cols; ++column) {
-            if (cornerMask.at<unsigned char>(row, column) != 0) {
-                cv::Vec3b& pixel = output.at<cv::Vec3b>(row, column);
-                pixel[0] = static_cast<unsigned char>(pixel[0] * 0.45);
-                pixel[1] = static_cast<unsigned char>(pixel[1] * 0.45);
-                pixel[2] = static_cast<unsigned char>(
-                    std::min(255.0, pixel[2] * 0.45 + 140.0));
-            }
-        }
+    cv::Mat labels;
+    cv::Mat stats;
+    cv::Mat centroids;
+
+    const int componentCount = cv::connectedComponentsWithStats(
+        cornerMask,
+        labels,
+        stats,
+        centroids);
+
+    for (int i = 1; i < componentCount; ++i) {
+        const int centerX = static_cast<int>(centroids.at<double>(i, 0));
+        const int centerY = static_cast<int>(centroids.at<double>(i, 1));
+
+        cv::circle(
+            output,
+            cv::Point(centerX, centerY),
+            4,
+            cv::Scalar(0, 0, 255),
+            2,
+            cv::LINE_AA);
     }
 
     return output;
