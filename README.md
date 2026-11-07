@@ -6,7 +6,7 @@ The project keeps the original semester-project architecture: camera acquisition
 
 ## Final processing capabilities
 
-The photo booth implements eight substantive image-processing capabilities:
+The photo booth implements ten substantive image-processing capabilities:
 
 1. **Channel swapping** — swaps the red and blue channels.
 2. **Dynamic contrast enhancement** — stretches each channel using percentile-based low/high values.
@@ -16,6 +16,8 @@ The photo booth implements eight substantive image-processing capabilities:
 6. **Image inversion** — computes the photographic negative of the image.
 7. **Image quantization** — reduces each channel to a selectable number of intensity levels.
 8. **Arbitrary-angle rotation** — rotates the image using inverse coordinate mapping.
+9. **Harris and FAST corner detection** — detects image corners using either the Harris corner response or the FAST feature detector and displays detected locations as a red overlay.
+10. **Minimum-distance and cosine classification** — represents images with normalized color histograms and compares the live image against reference-image classes using either Euclidean distance or cosine similarity.
 
 The application also provides a working photo-capture workflow with a three-second countdown, processed-image capture, and unique output filenames.
 
