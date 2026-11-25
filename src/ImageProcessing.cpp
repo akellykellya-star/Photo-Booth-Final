@@ -8,6 +8,7 @@
 #include <vector>
 #include <stdexcept>
 #include <string>
+#include <limits>
 
 namespace photo_booth {
 namespace {
@@ -357,7 +358,6 @@ cv::Mat detectFASTCorners(
 
     return mask;
 }
-
 cv::Mat drawCornerOverlay(
     const cv::Mat& image,
     const cv::Mat& cornerMask)
@@ -550,6 +550,321 @@ cv::Mat extractEmbeddedIcon(const cv::Mat& image)
     }
 
     return icon;
+}
+
+
+cv::Mat linearContrast(const cv::Mat& image, double inputLow, double inputHigh)
+{
+    validateImage(image, "linearContrast()");
+    if (inputLow < 0.0 || inputHigh > 255.0 || inputHigh <= inputLow)
+        throw std::invalid_argument("linearContrast(): invalid input range");
+    cv::Mat output;
+    image.convertTo(output, CV_32FC3,
+        255.0 / (inputHigh - inputLow),
+        -inputLow * 255.0 / (inputHigh - inputLow));
+    output.convertTo(output, CV_8UC3);
+    return output;
+}
+
+cv::Mat histogramEqualization(const cv::Mat& image)
+{
+    validateImage(image, "histogramEqualization()");
+    cv::Mat ycrcb;
+    cv::cvtColor(image, ycrcb, cv::COLOR_BGR2YCrCb);
+    std::vector<cv::Mat> channels;
+    cv::split(ycrcb, channels);
+    cv::equalizeHist(channels[0], channels[0]);
+    cv::merge(channels, ycrcb);
+    cv::Mat output;
+    cv::cvtColor(ycrcb, output, cv::COLOR_YCrCb2BGR);
+    return output;
+}
+
+cv::Mat histogramMatching(const cv::Mat& image, const cv::Mat& reference)
+{
+    validateImage(image, "histogramMatching()");
+    validateImage(reference, "histogramMatching(reference)");
+    std::vector<cv::Mat> sourceChannels, referenceChannels, outputChannels;
+    cv::split(image, sourceChannels);
+    cv::split(reference, referenceChannels);
+    for (int c = 0; c < 3; ++c) {
+        int sourceHist[256] = {}, referenceHist[256] = {};
+        for (int y = 0; y < sourceChannels[c].rows; ++y)
+            for (int x = 0; x < sourceChannels[c].cols; ++x)
+                sourceHist[sourceChannels[c].at<unsigned char>(y, x)]++;
+        for (int y = 0; y < referenceChannels[c].rows; ++y)
+            for (int x = 0; x < referenceChannels[c].cols; ++x)
+                referenceHist[referenceChannels[c].at<unsigned char>(y, x)]++;
+        double sourceCdf[256], referenceCdf[256];
+        double totalSource = sourceChannels[c].total();
+        double totalReference = referenceChannels[c].total();
+        double sumSource = 0.0, sumReference = 0.0;
+        for (int i = 0; i < 256; ++i) {
+            sumSource += sourceHist[i] / totalSource;
+            sumReference += referenceHist[i] / totalReference;
+            sourceCdf[i] = sumSource;
+            referenceCdf[i] = sumReference;
+        }
+        unsigned char lookup[256];
+        for (int i = 0; i < 256; ++i) {
+            int best = 0;
+            double difference = 1.0;
+            for (int j = 0; j < 256; ++j) {
+                double current = std::abs(sourceCdf[i] - referenceCdf[j]);
+                if (current < difference) {
+                    difference = current;
+                    best = j;
+                }
+            }
+            lookup[i] = static_cast<unsigned char>(best);
+        }
+        cv::Mat matched(sourceChannels[c].size(), CV_8UC1);
+        for (int y = 0; y < matched.rows; ++y)
+            for (int x = 0; x < matched.cols; ++x)
+                matched.at<unsigned char>(y, x) =
+                    lookup[sourceChannels[c].at<unsigned char>(y, x)];
+        outputChannels.push_back(matched);
+    }
+    cv::Mat output;
+    cv::merge(outputChannels, output);
+    return output;
+}
+cv::Mat affineTransform(const cv::Mat& image, double angleDegrees,
+                        double scale, double translateX, double translateY)
+{
+    validateImage(image, "affineTransform()");
+    if (scale <= 0.0) throw std::invalid_argument("affineTransform(): scale must be positive");
+    cv::Mat matrix = cv::getRotationMatrix2D(
+        cv::Point2f(image.cols / 2.0F, image.rows / 2.0F), angleDegrees, scale);
+    matrix.at<double>(0, 2) += translateX;
+    matrix.at<double>(1, 2) += translateY;
+    cv::Mat output;
+    cv::warpAffine(image, output, matrix, image.size(), cv::INTER_LINEAR,
+                   cv::BORDER_CONSTANT, cv::Scalar());
+    return output;
+}
+
+cv::Mat perspectiveTransform(const cv::Mat& image,
+    const std::vector<cv::Point2f>& sourcePoints,
+    const std::vector<cv::Point2f>& destinationPoints)
+{
+    validateImage(image, "perspectiveTransform()");
+    if (sourcePoints.size() != 4 || destinationPoints.size() != 4)
+        throw std::invalid_argument("perspectiveTransform(): exactly four point pairs are required");
+    cv::Mat matrix = cv::getPerspectiveTransform(sourcePoints, destinationPoints);
+    cv::Mat output;
+    cv::warpPerspective(image, output, matrix, image.size(), cv::INTER_LINEAR,
+                        cv::BORDER_CONSTANT, cv::Scalar());
+    return output;
+}
+
+cv::Mat logPolarTransform(const cv::Mat& image, double magnitude)
+{
+    validateImage(image, "logPolarTransform()");
+    if (magnitude <= 0.0) throw std::invalid_argument("logPolarTransform(): magnitude must be positive");
+    cv::Mat output;
+    cv::logPolar(image, output,
+        cv::Point2f(image.cols / 2.0F, image.rows / 2.0F),
+        magnitude, cv::INTER_LINEAR | cv::WARP_FILL_OUTLIERS);
+    return output;
+}
+
+cv::Mat spatialFilter(const cv::Mat& image, int preset, int kernelSize)
+{
+    validateImage(image, "spatialFilter()");
+    if (kernelSize < 3 || kernelSize > 31 || kernelSize % 2 == 0)
+        throw std::invalid_argument("spatialFilter(): kernel size must be odd and from 3 to 31");
+    cv::Mat output;
+    switch (preset) {
+    case 0: cv::blur(image, output, cv::Size(kernelSize, kernelSize)); break;
+    case 1: cv::GaussianBlur(image, output, cv::Size(kernelSize, kernelSize), 0.0); break;
+    case 2: cv::medianBlur(image, output, kernelSize); break;
+    case 3: cv::bilateralFilter(image, output, kernelSize, 75.0, 75.0); break;
+    case 4: {
+        cv::Mat kernel = (cv::Mat_<float>(3, 3) <<
+            0, -1, 0, -1, 5, -1, 0, -1, 0);
+        cv::filter2D(image, output, -1, kernel);
+        break;
+    }
+    default: throw std::invalid_argument("spatialFilter(): preset must be 0 through 4");
+    }
+    return output;
+}
+
+cv::Mat customSpatialFilter(const cv::Mat& image, const cv::Mat& kernel)
+{
+    validateImage(image, "customSpatialFilter()");
+    if (kernel.empty() || kernel.channels() != 1 ||
+        kernel.rows % 2 == 0 || kernel.cols % 2 == 0 ||
+        kernel.rows > 15 || kernel.cols > 15)
+        throw std::invalid_argument("customSpatialFilter(): kernel must be nonempty, single-channel, odd-sized, and at most 15x15");
+    cv::Mat floatKernel;
+    kernel.convertTo(floatKernel, CV_32F);
+    cv::Mat output;
+    cv::filter2D(image, output, -1, floatKernel);
+    return output;
+}
+
+cv::Mat frequencyFilter(const cv::Mat& image, bool lowPass, int shape,
+                        double cutoff, int butterworthOrder)
+{
+    validateImage(image, "frequencyFilter()");
+    if (shape < 0 || shape > 2 || cutoff <= 0.0 ||
+        cutoff > std::hypot(image.cols, image.rows) / 2.0 ||
+        butterworthOrder < 1 || butterworthOrder > 8)
+        throw std::invalid_argument("frequencyFilter(): invalid filter parameters");
+
+    cv::Mat gray, floatImage;
+    cv::cvtColor(image, gray, cv::COLOR_BGR2GRAY);
+    gray.convertTo(floatImage, CV_32F);
+    cv::Mat planes[] = {floatImage, cv::Mat::zeros(floatImage.size(), CV_32F)};
+    cv::Mat spectrum;
+    cv::merge(planes, 2, spectrum);
+    cv::dft(spectrum, spectrum);
+    cv::Mat shifted = spectrum.clone();
+    const int cx = shifted.cols / 2, cy = shifted.rows / 2;
+    for (int y = 0; y < shifted.rows; ++y)
+        for (int x = 0; x < shifted.cols; ++x) {
+            const int sx = (x + cx) % shifted.cols;
+            const int sy = (y + cy) % shifted.rows;
+            shifted.at<cv::Vec2f>(y, x) = spectrum.at<cv::Vec2f>(sy, sx);
+        }
+    for (int y = 0; y < shifted.rows; ++y)
+        for (int x = 0; x < shifted.cols; ++x) {
+            const double distance = std::hypot(x - cx, y - cy);
+            double low = 0.0;
+            if (shape == 0) low = distance <= cutoff ? 1.0 : 0.0;
+            else if (shape == 1)
+                low = 1.0 / (1.0 + std::pow(distance / cutoff, 2.0 * butterworthOrder));
+            else low = std::exp(-(distance * distance) / (2.0 * cutoff * cutoff));
+            const float gain = static_cast<float>(lowPass ? low : 1.0 - low);
+            shifted.at<cv::Vec2f>(y, x) *= gain;
+        }
+    cv::Mat unshifted = shifted.clone();
+    for (int y = 0; y < shifted.rows; ++y)
+        for (int x = 0; x < shifted.cols; ++x) {
+            const int sx = (x + cx) % shifted.cols;
+            const int sy = (y + cy) % shifted.rows;
+            unshifted.at<cv::Vec2f>(sy, sx) = shifted.at<cv::Vec2f>(y, x);
+        }
+    cv::Mat restored;
+    cv::idft(unshifted, restored, cv::DFT_REAL_OUTPUT | cv::DFT_SCALE);
+    cv::Mat output;
+    cv::normalize(restored, restored, 0, 255, cv::NORM_MINMAX);
+    restored.convertTo(restored, CV_8U);
+    cv::cvtColor(restored, output, cv::COLOR_GRAY2BGR);
+    return output;
+}
+
+cv::Mat imageFeatureVector(const cv::Mat& image)
+{
+    validateImage(image, "imageFeatureVector()");
+    cv::Mat hsv;
+    cv::cvtColor(image, hsv, cv::COLOR_BGR2HSV);
+    std::vector<cv::Mat> channels;
+    cv::split(hsv, channels);
+    int sizes[] = {8, 4, 4};
+    int channelsUsed[] = {0, 1, 2};
+    float hRanges[] = {0, 180}, sRanges[] = {0, 256}, vRanges[] = {0, 256};
+    const float* ranges[] = {hRanges, sRanges, vRanges};
+    cv::Mat histogram;
+    cv::calcHist(&hsv, 1, channelsUsed, cv::Mat(), histogram, 3, sizes, ranges, true, false);
+    cv::normalize(histogram, histogram, 1.0, 0.0, cv::NORM_L1);
+    return histogram.reshape(1, 1).clone();
+}
+
+namespace {
+ClassificationResult classifyFeature(const cv::Mat& feature,
+    const std::vector<cv::Mat>& classSamples, const std::vector<int>& labels,
+    bool cosine)
+{
+    if (feature.empty() || classSamples.empty() ||
+        classSamples.size() != labels.size())
+        throw std::invalid_argument("classifier: samples and labels must be nonempty and match");
+
+    cv::Mat query;
+    feature.convertTo(query, CV_32F);
+    query = query.reshape(1, 1);
+
+    std::vector<int> uniqueLabels;
+    std::vector<cv::Mat> means;
+    std::vector<int> counts;
+    for (size_t i = 0; i < classSamples.size(); ++i) {
+        cv::Mat sample;
+        classSamples[i].convertTo(sample, CV_32F);
+        sample = sample.reshape(1, 1);
+        if (sample.total() != query.total())
+            throw std::invalid_argument("classifier: feature dimensions do not match");
+        auto found = std::find(uniqueLabels.begin(), uniqueLabels.end(), labels[i]);
+        if (found == uniqueLabels.end()) {
+            uniqueLabels.push_back(labels[i]);
+            means.push_back(sample.clone());
+            counts.push_back(1);
+        } else {
+            const size_t index = static_cast<size_t>(found - uniqueLabels.begin());
+            means[index] += sample;
+            ++counts[index];
+        }
+    }
+
+    ClassificationResult result;
+    double best = cosine ? -std::numeric_limits<double>::infinity()
+                         : std::numeric_limits<double>::infinity();
+    for (size_t i = 0; i < means.size(); ++i) {
+        means[i] /= static_cast<float>(counts[i]);
+        double score;
+        if (cosine) {
+            const double denominator = cv::norm(query) * cv::norm(means[i]);
+            score = denominator > 0.0 ? query.dot(means[i]) / denominator : 0.0;
+            if (score > best) { best = score; result.label = uniqueLabels[i]; }
+        } else {
+            score = cv::norm(query, means[i], cv::NORM_L2);
+            if (score < best) { best = score; result.label = uniqueLabels[i]; }
+        }
+    }
+    result.score = best;
+    return result;
+}
+}
+
+ClassificationResult minimumDistanceClassifier(
+    const cv::Mat& feature, const std::vector<cv::Mat>& classSamples,
+    const std::vector<int>& labels)
+{ return classifyFeature(feature, classSamples, labels, false); }
+
+ClassificationResult cosineSimilarityClassifier(
+    const cv::Mat& feature, const std::vector<cv::Mat>& classSamples,
+    const std::vector<int>& labels)
+{ return classifyFeature(feature, classSamples, labels, true); }
+
+double classificationAccuracy(
+    const std::vector<cv::Mat>& samples,
+    const std::vector<int>& labels,
+    bool useCosineSimilarity)
+{
+    if (samples.size() != labels.size() || samples.size() < 4)
+        return -1.0;
+    int correct = 0;
+    int tested = 0;
+    for (size_t i = 0; i < samples.size(); ++i) {
+        std::vector<cv::Mat> training;
+        std::vector<int> trainingLabels;
+        for (size_t j = 0; j < samples.size(); ++j) {
+            if (j != i) {
+                training.push_back(samples[j]);
+                trainingLabels.push_back(labels[j]);
+            }
+        }
+        if (std::find(trainingLabels.begin(), trainingLabels.end(), labels[i]) ==
+            trainingLabels.end())
+            continue;
+        const ClassificationResult result = useCosineSimilarity
+            ? cosineSimilarityClassifier(samples[i], training, trainingLabels)
+            : minimumDistanceClassifier(samples[i], training, trainingLabels);
+        if (result.label == labels[i]) ++correct;
+        ++tested;
+    }
+    return tested > 0 ? 100.0 * correct / tested : -1.0;
 }
 
 }  // namespace photo_booth
