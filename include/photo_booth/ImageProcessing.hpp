@@ -8,6 +8,8 @@ namespace photo_booth {
 cv::Mat swapRedBlueChannels(const cv::Mat& image);
 cv::Mat invertImage(const cv::Mat& image);
 cv::Mat quantizeImage(const cv::Mat& image, int levels);
+cv::Mat igsQuantizeImage(const cv::Mat& image, int levels = 16);
+cv::Mat otsuThresholdImage(const cv::Mat& image);
 cv::Mat dynamicContrast(const cv::Mat& image, int low_percentile, int high_percentile);
 cv::Mat rotateImage(const cv::Mat& image, double angle);
 cv::Mat grayscaleImage(const cv::Mat& image);

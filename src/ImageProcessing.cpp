@@ -86,6 +86,59 @@ cv::Mat quantizeImage(const cv::Mat& image, int levels)
     return output;
 }
 
+cv::Mat igsQuantizeImage(const cv::Mat& image, int levels)
+{
+    validateImage(image, "igsQuantizeImage()");
+    if (levels < 2 || levels > 256) {
+        throw std::invalid_argument(
+            "igsQuantizeImage(): levels must be between 2 and 256");
+    }
+
+    cv::Mat output(image.size(), image.type());
+    const int step = std::max(1, 256 / levels);
+
+    // IGS carries each pixel's discarded quantization remainder forward.
+    for (int channel = 0; channel < 3; ++channel) {
+        int carriedError = 0;
+        for (int row = 0; row < image.rows; ++row) {
+            for (int column = 0; column < image.cols; ++column) {
+                const int inputValue =
+                    static_cast<int>(image.at<cv::Vec3b>(row, column)[channel]);
+                const int adjustedValue =
+                    std::min(255, inputValue + carriedError);
+                const int quantizedValue =
+                    (adjustedValue / step) * step;
+
+                output.at<cv::Vec3b>(row, column)[channel] =
+                    static_cast<unsigned char>(quantizedValue);
+                carriedError = adjustedValue - quantizedValue;
+            }
+        }
+    }
+
+    return output;
+}
+
+cv::Mat otsuThresholdImage(const cv::Mat& image)
+{
+    validateImage(image, "otsuThresholdImage()");
+
+    cv::Mat gray;
+    cv::cvtColor(image, gray, cv::COLOR_BGR2GRAY);
+
+    cv::Mat binary;
+    cv::threshold(
+        gray,
+        binary,
+        0.0,
+        255.0,
+        cv::THRESH_BINARY | cv::THRESH_OTSU);
+
+    cv::Mat output;
+    cv::cvtColor(binary, output, cv::COLOR_GRAY2BGR);
+    return output;
+}
+
 cv::Mat dynamicContrast(
     const cv::Mat& image,
     int low_percentile,

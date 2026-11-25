@@ -23,6 +23,8 @@ struct ProcessingState {
     bool contrast_enabled{true};
     bool inversion_enabled{false};
     bool quantization_enabled{false};
+    bool igs_quantization_enabled{false};
+    bool otsu_enabled{false};
     bool rotation_enabled{false};
     bool harris_enabled{false};
     bool fast_enabled{false};
@@ -93,6 +95,13 @@ cv::Mat processFrame(
     if (state.quantization_enabled) {
         processed_frame = photo_booth::quantizeImage(
             processed_frame, state.quantization_levels);
+    }
+    if (state.igs_quantization_enabled) {
+        processed_frame = photo_booth::igsQuantizeImage(
+            processed_frame, state.quantization_levels);
+    }
+    if (state.otsu_enabled) {
+        processed_frame = photo_booth::otsuThresholdImage(processed_frame);
     }
     if (state.rotation_enabled) {
         if (state.geometry_mode == 1)
@@ -261,11 +270,13 @@ void showPreviewFrame(
     const std::string advanced =
         "H Harris " + std::string(state.harris_enabled ? "ON" : "OFF") +
         "   F FAST " + std::string(state.fast_enabled ? "ON" : "OFF") +
-        "   D Embed icon " + std::string(state.data_embedding_enabled ? "ON" : "OFF");
+        "   D Embed " + std::string(state.data_embedding_enabled ? "ON" : "OFF") +
+        "   A IGS " + std::string(state.igs_quantization_enabled ? "ON" : "OFF") +
+        "   W Otsu " + std::string(state.otsu_enabled ? "ON" : "OFF");
 
     drawText(preview_frame, advanced, 10, 126);
-    drawText(preview_frame, "C I N G B E R H F D X V M T Y U O J 1 2 K", 10, 149);
-    drawText(preview_frame, "V contrast mode M reference T spatial 6 custom kernel Y frequency U shape O LPF/HPF J geometry 1/2 train K classify", 10, 194, 0.38);
+    drawText(preview_frame, "C I N A W G B E R H F D X V M T 6 Y U O J 1 2 K", 10, 149);
+    drawText(preview_frame, "V contrast M reference T spatial 6 custom Y frequency U shape O LPF/HPF J geometry 1/2 train K classify", 10, 194, 0.38);
 
     drawText(
         preview_frame,
@@ -480,6 +491,22 @@ bool handleKey(
             << " levels)\n";
         break;
 
+    case 'a':
+    case 'A':
+        state.igs_quantization_enabled =
+            !state.igs_quantization_enabled;
+        std::cout << "IGS quantization: "
+                  << (state.igs_quantization_enabled ? "ON" : "OFF")
+                  << " (" << state.quantization_levels << " levels)\n";
+        break;
+
+    case 'w':
+    case 'W':
+        state.otsu_enabled = !state.otsu_enabled;
+        std::cout << "Otsu thresholding: "
+                  << (state.otsu_enabled ? "ON" : "OFF") << '\n';
+        break;
+
     case 'g':
     case 'G':
         state.grayscale_enabled =
@@ -637,21 +664,21 @@ bool handleKey(
     case 'V':
         state.contrast_mode = (state.contrast_mode + 1) % 4;
         std::cout << "Contrast mode: " << state.contrast_mode
-                  << " (0 stretch, 1 linear, 2 equalize, 3 match reference)\\n";
+                  << " (0 stretch, 1 linear, 2 equalize, 3 match reference)\n";
         break;
 
     case 'm':
     case 'M':
         state.histogram_reference = processed_frame.clone();
         state.contrast_mode = 3;
-        std::cout << "Histogram reference captured; contrast matching enabled.\\n";
+        std::cout << "Histogram reference captured; contrast matching enabled.\n";
         break;
 
     case 't':
     case 'T':
         state.spatial_mode = (state.spatial_mode + 1) % 6;
         std::cout << "Spatial preset: " << state.spatial_mode
-                  << " (-1 off, 0 box, 1 Gaussian, 2 median, 3 bilateral, 4 sharpen; 5 custom API)\\n";
+                  << " (-1 off, 0 box, 1 Gaussian, 2 median, 3 bilateral, 4 sharpen; 5 custom API)\n";
         if (state.spatial_mode == 5) state.spatial_mode = -1;
         break;
 
@@ -663,40 +690,40 @@ bool handleKey(
                 std::cin >> kernel.at<float>(row, column);
         if (!std::cin) {
             std::cin.clear();
-            std::cin.ignore(10000, '\\n');
-            std::cout << "Invalid kernel input; custom filter unchanged.\\n";
+            std::cin.ignore(10000, '\n');
+            std::cout << "Invalid kernel input; custom filter unchanged.\n";
             break;
         }
         state.custom_kernel = kernel;
         state.spatial_mode = 5;
-        std::cout << "Custom 3x3 spatial kernel enabled.\\n";
+        std::cout << "Custom 3x3 spatial kernel enabled.\n";
         break;
     }
 
     case 'y':
     case 'Y':
         state.frequency_enabled = !state.frequency_enabled;
-        std::cout << "Frequency filter: " << (state.frequency_enabled ? "ON" : "OFF") << '\\n';
+        std::cout << "Frequency filter: " << (state.frequency_enabled ? "ON" : "OFF") << '\n';
         break;
 
     case 'u':
     case 'U':
         state.frequency_shape = (state.frequency_shape + 1) % 3;
         std::cout << "Frequency shape: " << state.frequency_shape
-                  << " (0 ideal, 1 Butterworth, 2 Gaussian)\\n";
+                  << " (0 ideal, 1 Butterworth, 2 Gaussian)\n";
         break;
 
     case 'o':
     case 'O':
         state.frequency_lowpass = !state.frequency_lowpass;
-        std::cout << "Frequency type: " << (state.frequency_lowpass ? "lowpass" : "highpass") << '\\n';
+        std::cout << "Frequency type: " << (state.frequency_lowpass ? "lowpass" : "highpass") << '\n';
         break;
 
     case 'j':
     case 'J':
         state.geometry_mode = (state.geometry_mode + 1) % 4;
         std::cout << "Geometry mode: " << state.geometry_mode
-                  << " (0 rotation, 1 affine, 2 perspective, 3 log-polar)\\n";
+                  << " (0 rotation, 1 affine, 2 perspective, 3 log-polar)\n";
         break;
 
     case '1':
@@ -705,14 +732,14 @@ bool handleKey(
         cv::Mat feature = photo_booth::imageFeatureVector(processed_frame);
         state.class_means.push_back(feature);
         state.class_labels.push_back(label);
-        std::cout << "Saved class " << label << " training sample.\\n";
+        std::cout << "Saved class " << label << " training sample.\n";
         break;
     }
 
     case 'k':
     case 'K': {
         if (state.class_means.size() < 2) {
-            std::cout << "Capture samples for classes 1 and 2 first.\\n";
+            std::cout << "Capture samples for classes 1 and 2 first.\n";
             break;
         }
         const cv::Mat feature = photo_booth::imageFeatureVector(processed_frame);
@@ -726,12 +753,12 @@ bool handleKey(
             state.class_means, state.class_labels, true);
         std::cout << "Minimum-distance class: " << minimum.label
                   << " (distance " << minimum.score << "); cosine class: "
-                  << cosine.label << " (similarity " << cosine.score << ")\\n";
+                  << cosine.label << " (similarity " << cosine.score << ")\n";
         if (minimumAccuracy >= 0.0)
             std::cout << "Leave-one-out training accuracy: minimum-distance "
-                      << minimumAccuracy << "%, cosine " << cosineAccuracy << "%\\n";
+                      << minimumAccuracy << "%, cosine " << cosineAccuracy << "%\n";
         else
-            std::cout << "Collect at least two samples per class to calculate leave-one-out accuracy.\\n";
+            std::cout << "Collect at least two samples per class to calculate leave-one-out accuracy.\n";
         break;
     }
 
