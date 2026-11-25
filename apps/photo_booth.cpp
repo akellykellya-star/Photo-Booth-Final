@@ -30,6 +30,16 @@ struct ProcessingState {
     bool grayscale_enabled{false};
     bool blur_enabled{false};
     bool edge_enabled{false};
+    int contrast_mode{0}; // 0 percentile stretch, 1 linear, 2 equalization, 3 matching
+    int geometry_mode{0}; // 0 rotation, 1 affine, 2 perspective, 3 log-polar
+    int spatial_mode{-1}; // -1 off, 0..4 presets, 5 custom
+    cv::Mat custom_kernel;
+    bool frequency_enabled{false};
+    bool frequency_lowpass{true};
+    int frequency_shape{0};
+    cv::Mat histogram_reference;
+    std::vector<cv::Mat> class_means;
+    std::vector<int> class_labels;
 
     int quantization_levels{8};
     int blur_kernel_size{5};
@@ -47,7 +57,14 @@ cv::Mat processFrame(
         processed_frame = photo_booth::swapRedBlueChannels(processed_frame);
     }
     if (state.contrast_enabled) {
-        processed_frame = photo_booth::dynamicContrast(processed_frame, 1, 99);
+        if (state.contrast_mode == 1)
+            processed_frame = photo_booth::linearContrast(processed_frame, 20.0, 235.0);
+        else if (state.contrast_mode == 2)
+            processed_frame = photo_booth::histogramEqualization(processed_frame);
+        else if (state.contrast_mode == 3 && !state.histogram_reference.empty())
+            processed_frame = photo_booth::histogramMatching(processed_frame, state.histogram_reference);
+        else
+            processed_frame = photo_booth::dynamicContrast(processed_frame, 1, 99);
     }
     if (state.grayscale_enabled) {
         processed_frame = photo_booth::grayscaleImage(processed_frame);
@@ -56,6 +73,16 @@ cv::Mat processFrame(
         processed_frame = photo_booth::blurImage(
             processed_frame, state.blur_kernel_size);
     }
+    if (state.spatial_mode >= 0 && state.spatial_mode <= 4)
+        processed_frame = photo_booth::spatialFilter(
+            processed_frame, state.spatial_mode, state.blur_kernel_size);
+    else if (state.spatial_mode == 5 && !state.custom_kernel.empty())
+        processed_frame = photo_booth::customSpatialFilter(
+            processed_frame, state.custom_kernel);
+    if (state.frequency_enabled)
+        processed_frame = photo_booth::frequencyFilter(
+            processed_frame, state.frequency_lowpass,
+            state.frequency_shape, 35.0, 2);
     if (state.edge_enabled) {
         processed_frame = photo_booth::edgeDetectImage(
             processed_frame, 50.0, 150.0);
@@ -68,8 +95,22 @@ cv::Mat processFrame(
             processed_frame, state.quantization_levels);
     }
     if (state.rotation_enabled) {
-        processed_frame = photo_booth::rotateImage(
-            processed_frame, state.rotation_angle);
+        if (state.geometry_mode == 1)
+            processed_frame = photo_booth::affineTransform(processed_frame, state.rotation_angle, 1.0, 20.0, 0.0);
+        else if (state.geometry_mode == 2) {
+            std::vector<cv::Point2f> source{
+                {0.0F, 0.0F}, {static_cast<float>(processed_frame.cols - 1), 0.0F},
+                {static_cast<float>(processed_frame.cols - 1), static_cast<float>(processed_frame.rows - 1)},
+                {0.0F, static_cast<float>(processed_frame.rows - 1)}};
+            std::vector<cv::Point2f> destination{
+                {20.0F, 20.0F}, {static_cast<float>(processed_frame.cols - 20), 0.0F},
+                {static_cast<float>(processed_frame.cols - 1), static_cast<float>(processed_frame.rows - 20)},
+                {0.0F, static_cast<float>(processed_frame.rows - 1)}};
+            processed_frame = photo_booth::perspectiveTransform(processed_frame, source, destination);
+        } else if (state.geometry_mode == 3)
+            processed_frame = photo_booth::logPolarTransform(processed_frame);
+        else
+            processed_frame = photo_booth::rotateImage(processed_frame, state.rotation_angle);
     }
 
     if (state.harris_enabled) {
@@ -217,14 +258,14 @@ void showPreviewFrame(
         parameters,
         10,
         98);
-
     const std::string advanced =
         "H Harris " + std::string(state.harris_enabled ? "ON" : "OFF") +
         "   F FAST " + std::string(state.fast_enabled ? "ON" : "OFF") +
         "   D Embed icon " + std::string(state.data_embedding_enabled ? "ON" : "OFF");
 
     drawText(preview_frame, advanced, 10, 126);
-    drawText(preview_frame, "C I N G B E R H F D X", 10, 149);
+    drawText(preview_frame, "C I N G B E R H F D X V M T Y U O J 1 2 K", 10, 149);
+    drawText(preview_frame, "V contrast mode M reference T spatial 6 custom kernel Y frequency U shape O LPF/HPF J geometry 1/2 train K classify", 10, 194, 0.38);
 
     drawText(
         preview_frame,
@@ -524,7 +565,6 @@ bool handleKey(
             << "x" << state.blur_kernel_size
             << '\n';
         break;
-
     case 'r':
     case 'R':
         state.rotation_enabled =
@@ -592,6 +632,108 @@ bool handleKey(
         state.fast_enabled = false;
         std::cout << "Corner detection: OFF\n";
         break;
+
+    case 'v':
+    case 'V':
+        state.contrast_mode = (state.contrast_mode + 1) % 4;
+        std::cout << "Contrast mode: " << state.contrast_mode
+                  << " (0 stretch, 1 linear, 2 equalize, 3 match reference)\\n";
+        break;
+
+    case 'm':
+    case 'M':
+        state.histogram_reference = processed_frame.clone();
+        state.contrast_mode = 3;
+        std::cout << "Histogram reference captured; contrast matching enabled.\\n";
+        break;
+
+    case 't':
+    case 'T':
+        state.spatial_mode = (state.spatial_mode + 1) % 6;
+        std::cout << "Spatial preset: " << state.spatial_mode
+                  << " (-1 off, 0 box, 1 Gaussian, 2 median, 3 bilateral, 4 sharpen; 5 custom API)\\n";
+        if (state.spatial_mode == 5) state.spatial_mode = -1;
+        break;
+
+    case '6': {
+        cv::Mat kernel(3, 3, CV_32F);
+        std::cout << "Enter nine custom 3x3 kernel values, row by row: ";
+        for (int row = 0; row < 3; ++row)
+            for (int column = 0; column < 3; ++column)
+                std::cin >> kernel.at<float>(row, column);
+        if (!std::cin) {
+            std::cin.clear();
+            std::cin.ignore(10000, '\\n');
+            std::cout << "Invalid kernel input; custom filter unchanged.\\n";
+            break;
+        }
+        state.custom_kernel = kernel;
+        state.spatial_mode = 5;
+        std::cout << "Custom 3x3 spatial kernel enabled.\\n";
+        break;
+    }
+
+    case 'y':
+    case 'Y':
+        state.frequency_enabled = !state.frequency_enabled;
+        std::cout << "Frequency filter: " << (state.frequency_enabled ? "ON" : "OFF") << '\\n';
+        break;
+
+    case 'u':
+    case 'U':
+        state.frequency_shape = (state.frequency_shape + 1) % 3;
+        std::cout << "Frequency shape: " << state.frequency_shape
+                  << " (0 ideal, 1 Butterworth, 2 Gaussian)\\n";
+        break;
+
+    case 'o':
+    case 'O':
+        state.frequency_lowpass = !state.frequency_lowpass;
+        std::cout << "Frequency type: " << (state.frequency_lowpass ? "lowpass" : "highpass") << '\\n';
+        break;
+
+    case 'j':
+    case 'J':
+        state.geometry_mode = (state.geometry_mode + 1) % 4;
+        std::cout << "Geometry mode: " << state.geometry_mode
+                  << " (0 rotation, 1 affine, 2 perspective, 3 log-polar)\\n";
+        break;
+
+    case '1':
+    case '2': {
+        const int label = key - '0';
+        cv::Mat feature = photo_booth::imageFeatureVector(processed_frame);
+        state.class_means.push_back(feature);
+        state.class_labels.push_back(label);
+        std::cout << "Saved class " << label << " training sample.\\n";
+        break;
+    }
+
+    case 'k':
+    case 'K': {
+        if (state.class_means.size() < 2) {
+            std::cout << "Capture samples for classes 1 and 2 first.\\n";
+            break;
+        }
+        const cv::Mat feature = photo_booth::imageFeatureVector(processed_frame);
+        const auto minimum = photo_booth::minimumDistanceClassifier(
+            feature, state.class_means, state.class_labels);
+        const auto cosine = photo_booth::cosineSimilarityClassifier(
+            feature, state.class_means, state.class_labels);
+        const double minimumAccuracy = photo_booth::classificationAccuracy(
+            state.class_means, state.class_labels, false);
+        const double cosineAccuracy = photo_booth::classificationAccuracy(
+            state.class_means, state.class_labels, true);
+        std::cout << "Minimum-distance class: " << minimum.label
+                  << " (distance " << minimum.score << "); cosine class: "
+                  << cosine.label << " (similarity " << cosine.score << ")\\n";
+        if (minimumAccuracy >= 0.0)
+            std::cout << "Leave-one-out training accuracy: minimum-distance "
+                      << minimumAccuracy << "%, cosine " << cosineAccuracy << "%\\n";
+        else
+            std::cout << "Collect at least two samples per class to calculate leave-one-out accuracy.\\n";
+        break;
+    }
 
     case ' ':
         return captureWithCountdown(
