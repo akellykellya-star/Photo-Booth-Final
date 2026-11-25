@@ -1,0 +1,889 @@
+#include <algorithm>
+#include <cstdlib>
+#include <filesystem>
+#include <iomanip>
+#include <iostream>
+#include <sstream>
+#include <stdexcept>
+#include <string>
+#include <thread>
+#include <chrono>
+
+#include <opencv2/highgui.hpp>
+#include <opencv2/imgcodecs.hpp>
+#include <opencv2/imgproc.hpp>
+
+#include "photo_booth/AppConfig.hpp"
+#include "photo_booth/ImageCapture.hpp"
+#include "photo_booth/ImageProcessing.hpp"
+
+namespace {
+
+struct ProcessingState {
+    bool contrast_enabled{true};
+    bool inversion_enabled{false};
+    bool quantization_enabled{false};
+    bool igs_quantization_enabled{false};
+    bool otsu_enabled{false};
+    bool rotation_enabled{false};
+    bool harris_enabled{false};
+    bool fast_enabled{false};
+    bool data_embedding_enabled{false};
+    bool grayscale_enabled{false};
+    bool blur_enabled{false};
+    bool edge_enabled{false};
+    int contrast_mode{0}; // 0 percentile stretch, 1 linear, 2 equalization, 3 matching
+    int geometry_mode{0}; // 0 rotation, 1 affine, 2 perspective, 3 log-polar
+    int spatial_mode{-1}; // -1 off, 0..4 presets, 5 custom
+    cv::Mat custom_kernel;
+    bool frequency_enabled{false};
+    bool frequency_lowpass{true};
+    int frequency_shape{0};
+    cv::Mat histogram_reference;
+    std::vector<cv::Mat> class_means;
+    std::vector<int> class_labels;
+
+    int quantization_levels{8};
+    int blur_kernel_size{5};
+    double rotation_angle{0.0};
+};
+
+cv::Mat processFrame(
+    const cv::Mat& frame,
+    const photo_booth::ProcessingConfig& config,
+    const ProcessingState& state)
+{
+    cv::Mat processed_frame = frame.clone();
+
+    if (config.channel_swap_enabled) {
+        processed_frame = photo_booth::swapRedBlueChannels(processed_frame);
+    }
+    if (state.contrast_enabled) {
+        if (state.contrast_mode == 1)
+            processed_frame = photo_booth::linearContrast(processed_frame, 20.0, 235.0);
+        else if (state.contrast_mode == 2)
+            processed_frame = photo_booth::histogramEqualization(processed_frame);
+        else if (state.contrast_mode == 3 && !state.histogram_reference.empty())
+            processed_frame = photo_booth::histogramMatching(processed_frame, state.histogram_reference);
+        else
+            processed_frame = photo_booth::dynamicContrast(processed_frame, 1, 99);
+    }
+    if (state.grayscale_enabled) {
+        processed_frame = photo_booth::grayscaleImage(processed_frame);
+    }
+    if (state.blur_enabled) {
+        processed_frame = photo_booth::blurImage(
+            processed_frame, state.blur_kernel_size);
+    }
+    if (state.spatial_mode >= 0 && state.spatial_mode <= 4)
+        processed_frame = photo_booth::spatialFilter(
+            processed_frame, state.spatial_mode, state.blur_kernel_size);
+    else if (state.spatial_mode == 5 && !state.custom_kernel.empty())
+        processed_frame = photo_booth::customSpatialFilter(
+            processed_frame, state.custom_kernel);
+    if (state.frequency_enabled)
+        processed_frame = photo_booth::frequencyFilter(
+            processed_frame, state.frequency_lowpass,
+            state.frequency_shape, 35.0, 2);
+    if (state.edge_enabled) {
+        processed_frame = photo_booth::edgeDetectImage(
+            processed_frame, 50.0, 150.0);
+    }
+    if (state.inversion_enabled) {
+        processed_frame = photo_booth::invertImage(processed_frame);
+    }
+    if (state.quantization_enabled) {
+        processed_frame = photo_booth::quantizeImage(
+            processed_frame, state.quantization_levels);
+    }
+    if (state.igs_quantization_enabled) {
+        processed_frame = photo_booth::igsQuantizeImage(
+            processed_frame, state.quantization_levels);
+    }
+    if (state.otsu_enabled) {
+        processed_frame = photo_booth::otsuThresholdImage(processed_frame);
+    }
+    if (state.rotation_enabled) {
+        if (state.geometry_mode == 1)
+            processed_frame = photo_booth::affineTransform(processed_frame, state.rotation_angle, 1.0, 20.0, 0.0);
+        else if (state.geometry_mode == 2) {
+            std::vector<cv::Point2f> source{
+                {0.0F, 0.0F}, {static_cast<float>(processed_frame.cols - 1), 0.0F},
+                {static_cast<float>(processed_frame.cols - 1), static_cast<float>(processed_frame.rows - 1)},
+                {0.0F, static_cast<float>(processed_frame.rows - 1)}};
+            std::vector<cv::Point2f> destination{
+                {20.0F, 20.0F}, {static_cast<float>(processed_frame.cols - 20), 0.0F},
+                {static_cast<float>(processed_frame.cols - 1), static_cast<float>(processed_frame.rows - 20)},
+                {0.0F, static_cast<float>(processed_frame.rows - 1)}};
+            processed_frame = photo_booth::perspectiveTransform(processed_frame, source, destination);
+        } else if (state.geometry_mode == 3)
+            processed_frame = photo_booth::logPolarTransform(processed_frame);
+        else
+            processed_frame = photo_booth::rotateImage(processed_frame, state.rotation_angle);
+    }
+
+    if (state.harris_enabled) {
+        const cv::Mat corner_mask =
+            photo_booth::detectHarrisCorners(processed_frame);
+        processed_frame = photo_booth::drawCornerOverlay(
+            processed_frame, corner_mask);
+    }
+    else if (state.fast_enabled) {
+        const cv::Mat corner_mask =
+            photo_booth::detectFASTCorners(processed_frame);
+        processed_frame = photo_booth::drawCornerOverlay(
+            processed_frame, corner_mask);
+    }
+
+    if (state.data_embedding_enabled) {
+        processed_frame = photo_booth::embedIconPhaseDispersion(processed_frame);
+    }
+
+    return processed_frame;
+}
+
+void drawText(
+    cv::Mat& image,
+    const std::string& text,
+    int x,
+    int y,
+    double scale = 0.45)
+{
+    cv::putText(
+        image,
+        text,
+        cv::Point(x, y),
+        cv::FONT_HERSHEY_SIMPLEX,
+        scale,
+        cv::Scalar(255, 255, 255),
+        1,
+        cv::LINE_AA);
+}
+
+void showPreviewFrame(
+    const cv::Mat& frame,
+    const photo_booth::PreviewConfig& config,
+    const ProcessingState& state,
+    const std::string& capture_message = {})
+{
+    cv::Mat preview_frame =
+        frame.clone();
+
+    switch (config.rotation) {
+    case 0:
+        break;
+
+    case 90:
+        cv::rotate(
+            preview_frame,
+            preview_frame,
+            cv::ROTATE_90_CLOCKWISE);
+        break;
+
+    case 180:
+        cv::rotate(
+            preview_frame,
+            preview_frame,
+            cv::ROTATE_180);
+        break;
+
+    case 270:
+        cv::rotate(
+            preview_frame,
+            preview_frame,
+            cv::ROTATE_90_COUNTERCLOCKWISE);
+        break;
+    }
+
+    if (config.mirror) {
+        cv::flip(
+            preview_frame,
+            preview_frame,
+            1);
+    }
+
+    drawText(
+        preview_frame,
+        "PHOTO BOOTH",
+        10,
+        25,
+        0.65);
+
+    std::string status =
+        "C Contrast " +
+        std::string(
+            state.contrast_enabled ? "ON" : "OFF") +
+        "   I Invert " +
+        std::string(
+            state.inversion_enabled ? "ON" : "OFF") +
+        "   N Quantize " +
+        std::string(
+            state.quantization_enabled ? "ON" : "OFF");
+
+    drawText(
+        preview_frame,
+        status,
+        10,
+        50);
+
+    std::string spatial =
+        "G Grayscale " +
+        std::string(
+            state.grayscale_enabled ? "ON" : "OFF") +
+        "   B Blur " +
+        std::string(
+            state.blur_enabled ? "ON" : "OFF") +
+        "   E Edges " +
+        std::string(
+            state.edge_enabled ? "ON" : "OFF");
+
+    drawText(
+        preview_frame,
+        spatial,
+        10,
+        74);
+
+    std::string parameters =
+        "R Rotate " +
+        std::string(
+            state.rotation_enabled ? "ON" : "OFF") +
+        " (" +
+        std::to_string(
+            static_cast<int>(state.rotation_angle)) +
+        " deg)";
+
+    parameters +=
+        "   Levels: " +
+        std::to_string(
+            state.quantization_levels);
+
+    parameters +=
+        "   Blur: " +
+        std::to_string(
+            state.blur_kernel_size);
+
+    drawText(
+        preview_frame,
+        parameters,
+        10,
+        98);
+    const std::string advanced =
+        "H Harris " + std::string(state.harris_enabled ? "ON" : "OFF") +
+        "   F FAST " + std::string(state.fast_enabled ? "ON" : "OFF") +
+        "   D Embed " + std::string(state.data_embedding_enabled ? "ON" : "OFF") +
+        "   A IGS " + std::string(state.igs_quantization_enabled ? "ON" : "OFF") +
+        "   W Otsu " + std::string(state.otsu_enabled ? "ON" : "OFF");
+
+    drawText(preview_frame, advanced, 10, 126);
+    drawText(preview_frame, "C I N A W G B E R H F D X V M T 6 Y U O J 1 2 K", 10, 149);
+    drawText(preview_frame, "V contrast M reference T spatial 6 custom Y frequency U shape O LPF/HPF J geometry 1/2 train K classify", 10, 194, 0.38);
+
+    drawText(
+        preview_frame,
+        "[ ] Levels   - + Blur   , . Angle   SPACE Capture   Q Quit",
+        10,
+        172);
+
+    if (state.data_embedding_enabled && preview_frame.cols >= 80 &&
+        preview_frame.rows >= 80) {
+        cv::Mat recovered_icon = photo_booth::extractEmbeddedIcon(frame);
+        cv::Mat enlarged_icon;
+        cv::resize(recovered_icon, enlarged_icon, cv::Size(48, 48), 0.0, 0.0,
+                   cv::INTER_NEAREST);
+        cv::Mat icon_bgr;
+        cv::cvtColor(enlarged_icon, icon_bgr, cv::COLOR_GRAY2BGR);
+        const cv::Rect icon_area(preview_frame.cols - 58, 10, 48, 48);
+        icon_bgr.copyTo(preview_frame(icon_area));
+    }
+
+    if (!capture_message.empty()) {
+        drawText(
+            preview_frame,
+            capture_message,
+            10,
+            preview_frame.rows - 20,
+            0.55);
+    }
+
+    cv::imshow(
+        config.window_name,
+        preview_frame);
+}
+
+std::filesystem::path nextCaptureFilename(
+    const std::string& configured_filename)
+{
+    std::filesystem::path configured{
+        configured_filename};
+
+    std::filesystem::path directory =
+        configured.parent_path();
+
+    if (!directory.empty()) {
+        std::filesystem::create_directories(
+            directory);
+    }
+
+    const std::string stem =
+        configured.stem().string().empty()
+            ? "captured_image"
+            : configured.stem().string();
+
+    std::string extension =
+        configured.extension().string();
+
+    if (extension.empty()) {
+        extension = ".png";
+    }
+
+    for (int index = 1; index <= 9999; ++index) {
+        std::ostringstream filename;
+        filename
+            << stem
+            << "_"
+            << std::setfill('0')
+            << std::setw(3)
+            << index
+            << extension;
+
+        const auto candidate =
+            directory / filename.str();
+
+        if (!std::filesystem::exists(candidate)) {
+            return candidate;
+        }
+    }
+
+    throw std::runtime_error(
+        "Unable to find an available capture filename.");
+}
+
+bool captureWithCountdown(
+    const cv::Mat& processed_frame,
+    const photo_booth::PreviewConfig& preview_config,
+    const photo_booth::CaptureConfig& capture_config)
+{
+    if (processed_frame.empty()) {
+        std::cerr
+            << "Unable to capture: processed frame is empty.\n";
+        return true;
+    }
+
+    // Freeze the current processed image during the countdown.
+    const cv::Mat capture_frame =
+        processed_frame.clone();
+
+    for (int count = 3; count >= 1; --count) {
+        cv::Mat countdown_frame =
+            capture_frame.clone();
+
+        switch (preview_config.rotation) {
+        case 90:
+            cv::rotate(
+                countdown_frame,
+                countdown_frame,
+                cv::ROTATE_90_CLOCKWISE);
+            break;
+        case 180:
+            cv::rotate(
+                countdown_frame,
+                countdown_frame,
+                cv::ROTATE_180);
+            break;
+        case 270:
+            cv::rotate(
+                countdown_frame,
+                countdown_frame,
+                cv::ROTATE_90_COUNTERCLOCKWISE);
+            break;
+        default:
+            break;
+        }
+
+        if (preview_config.mirror) {
+            cv::flip(
+                countdown_frame,
+                countdown_frame,
+                1);
+        }
+
+        drawText(
+            countdown_frame,
+            std::to_string(count),
+            std::max(20, countdown_frame.cols / 2 - 20),
+            std::max(60, countdown_frame.rows / 2),
+            2.0);
+
+        cv::imshow(
+            preview_config.window_name,
+            countdown_frame);
+
+        cv::waitKey(1000);
+    }
+
+    const auto output_path =
+        nextCaptureFilename(
+            capture_config.output_filename);
+
+    if (!cv::imwrite(
+            output_path.string(),
+            capture_frame)) {
+        std::cerr
+            << "Unable to save image to "
+            << output_path.string()
+            << '\n';
+
+        return true;
+    }
+
+    std::cout
+        << "Captured image: "
+        << output_path.string()
+        << '\n';
+
+    return true;
+}
+
+bool handleKey(
+    const int key,
+    ProcessingState& state,
+    const cv::Mat& processed_frame,
+    const photo_booth::PreviewConfig& preview_config,
+    const photo_booth::CaptureConfig& capture_config)
+{
+    switch (key) {
+    case 27:
+    case 'q':
+    case 'Q':
+        return false;
+
+    case 'c':
+    case 'C':
+        state.contrast_enabled =
+            !state.contrast_enabled;
+
+        std::cout
+            << "Dynamic contrast: "
+            << (state.contrast_enabled ? "ON" : "OFF")
+            << '\n';
+        break;
+
+    case 'i':
+    case 'I':
+        state.inversion_enabled =
+            !state.inversion_enabled;
+
+        std::cout
+            << "Image inversion: "
+            << (state.inversion_enabled ? "ON" : "OFF")
+            << '\n';
+        break;
+
+    case 'n':
+    case 'N':
+        state.quantization_enabled =
+            !state.quantization_enabled;
+
+        std::cout
+            << "Quantization: "
+            << (state.quantization_enabled ? "ON" : "OFF")
+            << " (" << state.quantization_levels
+            << " levels)\n";
+        break;
+
+    case 'a':
+    case 'A':
+        state.igs_quantization_enabled =
+            !state.igs_quantization_enabled;
+        std::cout << "IGS quantization: "
+                  << (state.igs_quantization_enabled ? "ON" : "OFF")
+                  << " (" << state.quantization_levels << " levels)\n";
+        break;
+
+    case 'w':
+    case 'W':
+        state.otsu_enabled = !state.otsu_enabled;
+        std::cout << "Otsu thresholding: "
+                  << (state.otsu_enabled ? "ON" : "OFF") << '\n';
+        break;
+
+    case 'g':
+    case 'G':
+        state.grayscale_enabled =
+            !state.grayscale_enabled;
+
+        std::cout
+            << "Grayscale: "
+            << (state.grayscale_enabled ? "ON" : "OFF")
+            << '\n';
+        break;
+
+    case 'b':
+    case 'B':
+        state.blur_enabled =
+            !state.blur_enabled;
+
+        std::cout
+            << "Gaussian blur: "
+            << (state.blur_enabled ? "ON" : "OFF")
+            << " (" << state.blur_kernel_size
+            << "x" << state.blur_kernel_size << ")\n";
+        break;
+
+    case 'e':
+    case 'E':
+        state.edge_enabled =
+            !state.edge_enabled;
+
+        std::cout
+            << "Edge detection: "
+            << (state.edge_enabled ? "ON" : "OFF")
+            << '\n';
+        break;
+
+    case ']':
+        if (state.quantization_levels < 256) {
+            state.quantization_levels *= 2;
+
+            if (state.quantization_levels > 256) {
+                state.quantization_levels = 256;
+            }
+        }
+
+        std::cout
+            << "Quantization levels: "
+            << state.quantization_levels
+            << '\n';
+        break;
+
+    case '[':
+        if (state.quantization_levels > 2) {
+            state.quantization_levels /= 2;
+        }
+
+        std::cout
+            << "Quantization levels: "
+            << state.quantization_levels
+            << '\n';
+        break;
+
+    case '-':
+    case '_':
+        if (state.blur_kernel_size > 3) {
+            state.blur_kernel_size -= 2;
+        }
+
+        std::cout
+            << "Blur kernel: "
+            << state.blur_kernel_size
+            << "x" << state.blur_kernel_size
+            << '\n';
+        break;
+
+    case '+':
+    case '=':
+        if (state.blur_kernel_size < 31) {
+            state.blur_kernel_size += 2;
+        }
+
+        std::cout
+            << "Blur kernel: "
+            << state.blur_kernel_size
+            << "x" << state.blur_kernel_size
+            << '\n';
+        break;
+    case 'r':
+    case 'R':
+        state.rotation_enabled =
+            !state.rotation_enabled;
+
+        std::cout
+            << "Rotation: "
+            << (state.rotation_enabled ? "ON" : "OFF")
+            << " (" << state.rotation_angle
+            << " degrees)\n";
+        break;
+
+    case ',':
+        state.rotation_angle -= 5.0;
+
+        if (state.rotation_angle < -180.0) {
+            state.rotation_angle = -180.0;
+        }
+
+        std::cout
+            << "Rotation angle: "
+            << state.rotation_angle
+            << " degrees\n";
+        break;
+
+    case '.':
+        state.rotation_angle += 5.0;
+
+        if (state.rotation_angle > 180.0) {
+            state.rotation_angle = 180.0;
+        }
+
+        std::cout
+            << "Rotation angle: "
+            << state.rotation_angle
+            << " degrees\n";
+        break;
+
+    case 'h':
+    case 'H':
+        state.harris_enabled = !state.harris_enabled;
+        state.fast_enabled = false;
+        std::cout << "Harris corner detection: "
+                  << (state.harris_enabled ? "ON" : "OFF") << '\n';
+        break;
+
+    case 'f':
+    case 'F':
+        state.fast_enabled = !state.fast_enabled;
+        state.harris_enabled = false;
+        std::cout << "FAST corner detection: "
+                  << (state.fast_enabled ? "ON" : "OFF") << '\n';
+        break;
+
+    case 'd':
+    case 'D':
+        state.data_embedding_enabled = !state.data_embedding_enabled;
+        std::cout << "Fourier phase icon embedding: "
+                  << (state.data_embedding_enabled ? "ON" : "OFF") << '\n';
+        break;
+
+    case 'x':
+    case 'X':
+        state.harris_enabled = false;
+        state.fast_enabled = false;
+        std::cout << "Corner detection: OFF\n";
+        break;
+
+    case 'v':
+    case 'V':
+        state.contrast_mode = (state.contrast_mode + 1) % 4;
+        std::cout << "Contrast mode: " << state.contrast_mode
+                  << " (0 stretch, 1 linear, 2 equalize, 3 match reference)\n";
+        break;
+
+    case 'm':
+    case 'M':
+        state.histogram_reference = processed_frame.clone();
+        state.contrast_mode = 3;
+        std::cout << "Histogram reference captured; contrast matching enabled.\n";
+        break;
+
+    case 't':
+    case 'T':
+        state.spatial_mode = (state.spatial_mode + 1) % 6;
+        std::cout << "Spatial preset: " << state.spatial_mode
+                  << " (-1 off, 0 box, 1 Gaussian, 2 median, 3 bilateral, 4 sharpen; 5 custom API)\n";
+        if (state.spatial_mode == 5) state.spatial_mode = -1;
+        break;
+
+    case '6': {
+        cv::Mat kernel(3, 3, CV_32F);
+        std::cout << "Enter nine custom 3x3 kernel values, row by row: ";
+        for (int row = 0; row < 3; ++row)
+            for (int column = 0; column < 3; ++column)
+                std::cin >> kernel.at<float>(row, column);
+        if (!std::cin) {
+            std::cin.clear();
+            std::cin.ignore(10000, '\n');
+            std::cout << "Invalid kernel input; custom filter unchanged.\n";
+            break;
+        }
+        state.custom_kernel = kernel;
+        state.spatial_mode = 5;
+        std::cout << "Custom 3x3 spatial kernel enabled.\n";
+        break;
+    }
+
+    case 'y':
+    case 'Y':
+        state.frequency_enabled = !state.frequency_enabled;
+        std::cout << "Frequency filter: " << (state.frequency_enabled ? "ON" : "OFF") << '\n';
+        break;
+
+    case 'u':
+    case 'U':
+        state.frequency_shape = (state.frequency_shape + 1) % 3;
+        std::cout << "Frequency shape: " << state.frequency_shape
+                  << " (0 ideal, 1 Butterworth, 2 Gaussian)\n";
+        break;
+
+    case 'o':
+    case 'O':
+        state.frequency_lowpass = !state.frequency_lowpass;
+        std::cout << "Frequency type: " << (state.frequency_lowpass ? "lowpass" : "highpass") << '\n';
+        break;
+
+    case 'j':
+    case 'J':
+        state.geometry_mode = (state.geometry_mode + 1) % 4;
+        std::cout << "Geometry mode: " << state.geometry_mode
+                  << " (0 rotation, 1 affine, 2 perspective, 3 log-polar)\n";
+        break;
+
+    case '1':
+    case '2': {
+        const int label = key - '0';
+        cv::Mat feature = photo_booth::imageFeatureVector(processed_frame);
+        state.class_means.push_back(feature);
+        state.class_labels.push_back(label);
+        std::cout << "Saved class " << label << " training sample.\n";
+        break;
+    }
+
+    case 'k':
+    case 'K': {
+        if (state.class_means.size() < 2) {
+            std::cout << "Capture samples for classes 1 and 2 first.\n";
+            break;
+        }
+        const cv::Mat feature = photo_booth::imageFeatureVector(processed_frame);
+        const auto minimum = photo_booth::minimumDistanceClassifier(
+            feature, state.class_means, state.class_labels);
+        const auto cosine = photo_booth::cosineSimilarityClassifier(
+            feature, state.class_means, state.class_labels);
+        const double minimumAccuracy = photo_booth::classificationAccuracy(
+            state.class_means, state.class_labels, false);
+        const double cosineAccuracy = photo_booth::classificationAccuracy(
+            state.class_means, state.class_labels, true);
+        std::cout << "Minimum-distance class: " << minimum.label
+                  << " (distance " << minimum.score << "); cosine class: "
+                  << cosine.label << " (similarity " << cosine.score << ")\n";
+        if (minimumAccuracy >= 0.0)
+            std::cout << "Leave-one-out training accuracy: minimum-distance "
+                      << minimumAccuracy << "%, cosine " << cosineAccuracy << "%\n";
+        else
+            std::cout << "Collect at least two samples per class to calculate leave-one-out accuracy.\n";
+        break;
+    }
+
+    case ' ':
+        return captureWithCountdown(
+            processed_frame,
+            preview_config,
+            capture_config);
+
+    default:
+        break;
+    }
+
+    return true;
+}
+
+}  // namespace
+
+int main(
+    int argc,
+    char* argv[])
+{
+    try {
+        std::filesystem::path config_path{
+            "config.toml"};
+
+        if (argc > 2) {
+            std::cerr
+                << "Usage: "
+                << argv[0]
+                << " [config.toml]\n";
+            return EXIT_FAILURE;
+        }
+
+        if (argc == 2) {
+            const std::string argument{
+                argv[1]};
+
+            if (argument == "-h" ||
+                argument == "--help") {
+                std::cout
+                    << "Usage: "
+                    << argv[0]
+                    << " [config.toml]\n\n"
+                    << "Runs the photo-booth image-processing "
+                    << "application.\n";
+                return EXIT_SUCCESS;
+            }
+
+            config_path = argument;
+        }
+
+        const auto config =
+            photo_booth::loadConfig(
+                config_path);
+
+        photo_booth::ImageCapture camera(
+            photo_booth::makeImageCaptureConfiguration(
+                config.camera));
+
+        if (!camera.open()) {
+            std::cerr
+                << camera.errorMessage()
+                << '\n';
+            return EXIT_FAILURE;
+        }
+
+        std::cout
+            << camera
+            << '\n';
+
+        cv::namedWindow(
+            config.preview.window_name,
+            cv::WINDOW_AUTOSIZE);
+
+        ProcessingState processing_state;
+
+        while (true) {
+            if (!camera.read()) {
+                std::cerr
+                    << camera.errorMessage()
+                    << '\n';
+                return EXIT_FAILURE;
+            }
+
+            cv::Mat processed_frame =
+                processFrame(
+                    camera.image(),
+                    config.processing,
+                    processing_state);
+
+            showPreviewFrame(
+                processed_frame,
+                config.preview,
+                processing_state);
+
+            const int key =
+                cv::waitKey(1);
+
+            if (!handleKey(
+                    key,
+                    processing_state,
+                    processed_frame,
+                    config.preview,
+                    config.capture)) {
+                break;
+            }
+        }
+
+        cv::destroyAllWindows();
+    }
+    catch (const cv::Exception& error) {
+        std::cerr
+            << "OpenCV error: "
+            << error.what()
+            << '\n';
+        return EXIT_FAILURE;
+    }
+    catch (const std::exception& error) {
+        std::cerr
+            << "Error: "
+            << error.what()
+            << '\n';
+        return EXIT_FAILURE;
+    }
+
+    return EXIT_SUCCESS;
+}
